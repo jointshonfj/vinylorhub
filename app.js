@@ -34,7 +34,17 @@ const ls = { get: k => { try { return localStorage.getItem(k); } catch { return 
 const S = { me: null, users: [], offers: [], settings: null, products: null, view: ls.get('vh_view') || 'board', q: '', who: '', fStatus: '' };
 const CREDIT = `<div class="credit">Postaveno na struktuře <b>SmartJoi</b>™<br>vytvořil <a href="https://www.jointshon.cz" target="_blank" rel="noopener">jointshon.cz</a></div>`;
 let leaveGuard = null;
-let routeCleanup = null; // úklid při odchodu z obrazovky (např. živé odběry)
+let routeCleanup = null;
+// ---------- světlý / tmavý režim ----------
+const getTheme = () => document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+function setTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('vh_theme', t); } catch {}
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', t === 'dark' ? '#0a0a0a' : '#f4f5f3');
+  $$('.theme-toggle button').forEach(b => b.classList.toggle('on', b.dataset.theme === t));
+}
+const themeToggle = () => `<div class="theme-toggle" role="group" aria-label="Režim vzhledu"><button type="button" data-theme="light" class="${getTheme() === 'light' ? 'on' : ''}" title="Světlý režim">☀︎ Světlý</button><button type="button" data-theme="dark" class="${getTheme() === 'dark' ? 'on' : ''}" title="Tmavý režim">☾ Tmavý</button></div>`;
+document.addEventListener('click', e => { const b = e.target.closest('.theme-toggle button[data-theme]'); if (b) setTheme(b.dataset.theme); }); // úklid při odchodu z obrazovky (např. živé odběry)
 
 // ---------- pomocné ----------
 function check({ data, error }) {
@@ -282,7 +292,7 @@ function shell(active, inner) {
       ${nav('#/nastaveni', 'settings', '⚙️', 'Nastavení')}
       ${nav('#/ucet', 'account', '👤', 'Můj účet')}
     </nav>
-    <div class="me"><div class="who"><span class="av lg">${initials(S.me.id)}</span><div><b>${esc(S.me.name)}</b><a href="#/ucet">Účet</a><a href="#" id="logout">Odhlásit</a></div></div>${CREDIT}</div>`;
+    <div class="me"><div class="who"><span class="av lg">${initials(S.me.id)}</span><div><b>${esc(S.me.name)}</b><a href="#/ucet">Účet</a><a href="#" id="logout">Odhlásit</a></div></div>${themeToggle()}${CREDIT}</div>`;
   $('#logout').onclick = e => { e.preventDefault(); logout(); };
   $('#side').onclick = e => { if (e.target.closest('a')) $('#side').classList.remove('open'); };
   // nový <main> bez posluchačů z předchozí obrazovky
@@ -316,7 +326,7 @@ async function renderLogin(msg = '') {
   let lastEmail = '';
   try { lastEmail = localStorage.getItem('vh_last_email') || ''; } catch {}
   $('#app').innerHTML = `
-  <div class="login"><form class="panel" id="lf" autocomplete="on">
+  <div class="login">${themeToggle()}<form class="panel" id="lf" autocomplete="on">
     <img class="logo" src="img/logo.png" alt="Vinylor">
     <h1>Vinylor Hub</h1>
     <div class="f"><label for="le-mail">E-mail</label><input id="le-mail" name="email" type="email" autocomplete="username" required value="${esc(lastEmail)}" placeholder="jmeno@vinylor.cz"></div>
@@ -362,7 +372,7 @@ async function renderMfa() {
   if (error) { await logout('Přihlášení vypršelo, přihlas se znovu.'); return; }
   const verified = (lf.totp || []).filter(f => f.status === 'verified');
   const box = (title, body) => {
-    $('#app').innerHTML = `<div class="login"><form class="panel mfa" id="mf">
+    $('#app').innerHTML = `<div class="login">${themeToggle()}<form class="panel mfa" id="mf">
       <div class="mfa-ico">🔐</div><h1>${esc(title)}</h1>${body}
       <div class="err" id="me" role="alert"></div>
       <button class="btn primary lg" style="width:100%">Ověřit</button>
@@ -1246,7 +1256,7 @@ async function renderAccount() {
   shell('account', `
   <div class="topbar"><h1>Můj účet</h1></div>
   <div class="stack" style="max-width:760px">
-    ${me.must_change ? '<div class="panel panel-b" style="border-color:#f1c27d;background:#fff8ec">👋 Vítej! Nejdřív si prosím nastav vlastní heslo — dočasné heslo od správce už dál nepoužívej.</div>' : ''}
+    ${me.must_change ? '<div class="panel panel-b notice">👋 Vítej! Nejdřív si prosím nastav vlastní heslo — dočasné heslo od správce už dál nepoužívej.</div>' : ''}
     <form class="panel" id="pw" autocomplete="on"><div class="panel-h">🔑 Změna hesla</div><div class="panel-b form">
       <input type="email" name="username" value="${esc(me.email)}" autocomplete="username" hidden>
       <div class="full"><label for="pw-old">Současné heslo</label><input id="pw-old" name="old" type="password" autocomplete="current-password" required></div>
@@ -2486,7 +2496,7 @@ async function openCard(id) {
         </div>
         <div class="cm-side">
           <label>Obálka</label>
-          <div class="swatches small">${COVERS.map(x => `<button class="sw2 ${c.cover === x ? 'on' : ''}" data-cover="${x}" style="background:${x ? LABEL_COLORS[x] : 'repeating-linear-gradient(45deg,#eef0ec 0 4px,#fff 4px 8px)'}" title="${x || 'bez obálky'}"></button>`).join('')}</div>
+          <div class="swatches small">${COVERS.map(x => `<button class="sw2 ${c.cover === x ? 'on' : ''}" data-cover="${x}" style="background:${x ? LABEL_COLORS[x] : 'repeating-linear-gradient(45deg,var(--surface-2) 0 4px,var(--panel) 4px 8px)'}" title="${x || 'bez obálky'}"></button>`).join('')}</div>
           <label style="margin-top:14px">Akce</label>
           <button class="btn sm" data-arch>${c.archived ? '↩ Obnovit z archivu' : '🗄 Archivovat'}</button>
           <button class="btn sm danger" data-del>🗑 Smazat kartu</button>
