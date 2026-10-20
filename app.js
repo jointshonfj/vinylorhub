@@ -1,6 +1,7 @@
 // Vinylor Hub — frontend (GitHub Pages + Supabase)
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
 import { offerPdf } from './pdf.js';
+import { APP_VERSION, APP_CHANNEL, APP_BUILD, CHANGELOG } from './version.js';
 
 const { createClient } = window.supabase; // knihovna je přímo v aplikaci (vendor/supabase.js)
 // Relace: na důvěryhodném zařízení přežije zavření prohlížeče (localStorage), jinak jen do zavření okna (sessionStorage).
@@ -32,9 +33,38 @@ const STATUS_HINT = {
 const ls = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
 const S = { me: null, users: [], offers: [], settings: null, products: null, view: ls.get('vh_view') || 'board', q: '', who: '', fStatus: '' };
-const CREDIT = `<div class="credit">Postaveno na struktuře <b>SmartJoi</b>™<br>vytvořil <a href="https://www.jointshon.cz" target="_blank" rel="noopener">jointshon.cz</a></div>`;
+const VERSION_LABEL = `v${APP_VERSION}${APP_CHANNEL ? ' ' + APP_CHANNEL : ''}`;
+const CREDIT = `<div class="credit">Postaveno na struktuře <b>SmartJoi</b>™<br>vytvořil <a href="https://www.jointshon.cz" target="_blank" rel="noopener">jointshon.cz</a><br><button type="button" class="ver-btn" data-ver title="Co je nového">${VERSION_LABEL}</button></div>`;
 let leaveGuard = null;
 let routeCleanup = null;
+// ---------- verze aplikace ----------
+document.addEventListener('click', e => {
+  if (!e.target.closest('[data-ver]')) return;
+  modal({
+    title: `Vinylor Hub ${VERSION_LABEL}`,
+    body: `<p class="muted small">Sestaveno ${esc(czDate(APP_BUILD))}${APP_CHANNEL === 'beta' ? ' · beta = ještě se ladí, chyby prosím hlas správci' : ''}</p>
+      <div class="changelog">${CHANGELOG.map(c => `<div><b>v${esc(c.v)}</b> <span class="muted small">${esc(czDate(c.d))}</span><ul>${c.t.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('')}</div>`,
+    actions: [{ label: 'Zavřít', value: null, cls: 'primary' }],
+  });
+});
+// když je na serveru novější verze, nabídnout obnovení (kontrola při návratu do okna a každých 10 minut)
+let updateShown = false;
+async function checkForUpdate() {
+  if (updateShown) return;
+  try {
+    const m = await import('./version.js?t=' + Date.now());
+    if (m.APP_VERSION === APP_VERSION && m.APP_BUILD === APP_BUILD) return;
+    updateShown = true;
+    const b = document.createElement('div');
+    b.className = 'upd-banner';
+    b.innerHTML = `<span>Je dostupná nová verze <b>v${esc(m.APP_VERSION)}${m.APP_CHANNEL ? ' ' + esc(m.APP_CHANNEL) : ''}</b>. Rozepsané změny se před obnovením uloží.</span><button class="btn sm primary" type="button">Obnovit</button>`;
+    document.body.appendChild(b);
+    $('button', b).onclick = async () => { if (leaveGuard) { try { await leaveGuard(); } catch {} } location.reload(); };
+  } catch { /* offline — příště */ }
+}
+setInterval(checkForUpdate, 10 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdate(); });
+
 // ---------- světlý / tmavý režim ----------
 const getTheme = () => document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
 function setTheme(t) {
@@ -357,7 +387,7 @@ async function renderLogin(msg = '') {
     loginFails.n = 0;
     try { localStorage.setItem('vh_last_email', email); } catch {}
     touchActivity();
-    try { await sb.rpc('hub_log', { p_action: 'login', p_detail: { trusted: trustedDevice(), ua: navigator.userAgent.slice(0, 120) } }); } catch {}
+    try { await sb.rpc('hub_log', { p_action: 'login', p_detail: { trusted: trustedDevice(), ua: navigator.userAgent.slice(0, 120), ver: APP_VERSION } }); } catch {}
     S.me = null;
     route();
   };
@@ -1160,6 +1190,15 @@ async function renderSettings() {
       ${inp('marginBad', 'Varovat při marži pod (%) — červeně', s.marginBad ?? 15, '', 'number')}
     </div></section>
 
+    <section class="panel"><div class="panel-h">🔌 Propojení se Shoptetem <span class="sub">Private API</span></div><div class="panel-b">
+      <div id="shStatus" class="small muted">Token je uložený v Supabase (Secrets), do prohlížeče se nikdy nedostane. Klikni na „Otestovat spojení“.</div>
+      <div class="form" style="margin-top:12px">
+        <div><label for="shStock">Sklad pro naskladnění</label><select id="shStock" name="shoptetStockId"><option value="${esc(s.shoptetStockId ?? 1)}">${esc(s.shoptetStockName || 'Sklad ' + (s.shoptetStockId ?? 1))}</option></select><input type="hidden" name="shoptetStockName" id="shStockName" value="${esc(s.shoptetStockName || '')}"></div>
+        <div><label>&nbsp;</label><button type="button" class="btn" id="shTest">↻ Otestovat spojení</button></div>
+      </div>
+      <div class="hint">Do tohoto skladu zapisuje tlačítko „Naskladnit do Shoptetu“ u příjemek. Přidává se jen přírůstek, množství se nikdy nepřepisuje.</div>
+    </div></section>
+
     <section class="panel"><div class="panel-h">🏢 Dodavatel (hlavička PDF)</div><div class="panel-b form">
       ${inp('s.company', 'Firma', sup.company)}
       ${inp('s.street', 'Ulice', sup.street)}
@@ -1188,6 +1227,20 @@ async function renderSettings() {
     $('#numPreview').innerHTML = `Další nabídka dostane číslo <b class="num-t" style="color:${ok ? 'var(--brand)' : 'var(--danger)'}">${esc(num)}</b>${ok ? ' — vhodné jako variabilní symbol ✓' : ' — nehodí se jako variabilní symbol (jen číslice, max. 10)'}`;
   };
   $('#sf').addEventListener('input', preview); preview();
+  $('#shStock').onchange = e => { $('#shStockName').value = e.target.selectedOptions[0]?.textContent || ''; };
+  $('#shTest').onclick = async e => {
+    const b = e.currentTarget; b.disabled = true; b.innerHTML = '<span class="spin"></span> Testuji…';
+    try {
+      const r = await shoptetCall({ action: 'status' });
+      if (!r.ok) throw new Error(r.error || 'Spojení se nepovedlo.');
+      const cur = String($('#shStock').value);
+      $('#shStock').innerHTML = r.stocks.map(x => `<option value="${x.id}" ${String(x.id) === cur ? 'selected' : ''}>${esc(x.title)}</option>`).join('');
+      $('#shStockName').value = $('#shStock').selectedOptions[0]?.textContent || '';
+      $('#shStatus').innerHTML = `<span class="mg ok">Spojeno</span> &nbsp;${esc(r.shop.company || 'e-shop')} · <b>${r.products ?? '?'}</b> produktů · <b>${r.stocks.length}</b> sklady (${r.stocks.map(x => esc(x.title)).join(', ')}) · <b>${r.statuses.length}</b> stavů objednávek`;
+      toast('Spojení se Shoptetem funguje ✓');
+    } catch (err) { $('#shStatus').innerHTML = `<span class="mg bad">Chyba</span> ${esc(err.message)}`; toast(err.message, true); }
+    b.disabled = false; b.textContent = '↻ Otestovat spojení';
+  };
   $('#refresh').onclick = async e => {
     const b = e.currentTarget; b.disabled = true; b.innerHTML = '<span class="spin"></span> Načítám…';
     try {
@@ -1204,7 +1257,7 @@ async function renderSettings() {
     const f = new FormData(e.target);
     const fresh = (await loadSettings()).data; // ať nepřepíšeme číslo řady, které mezitím někdo použil
     const data = { ...fresh, supplier: { ...(fresh.supplier || {}) } };
-    const nums = ['numberDigits', 'nextNumber', 'validDays', 'defaultDiscount', 'defaultVat', 'priceStep', 'stockRate', 'stockTransportPct', 'marginWarn', 'marginBad'];
+    const nums = ['numberDigits', 'nextNumber', 'validDays', 'defaultDiscount', 'defaultVat', 'priceStep', 'stockRate', 'stockTransportPct', 'marginWarn', 'marginBad', 'shoptetStockId'];
     for (const [k, v] of f) {
       if (k.startsWith('s.')) data.supplier[k.slice(2)] = v;
       else data[k] = nums.includes(k) ? Number(v) : v;
@@ -1219,6 +1272,16 @@ async function renderSettings() {
 }
 
 // ---------- účet ----------
+async function shoptetCall(body) {
+  const { data, error } = await sb.functions.invoke('hub-shoptet', { body });
+  if (error) {
+    let msg = error.message;
+    try { msg = (await error.context.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
 async function adminCall(body) {
   const { data, error } = await sb.functions.invoke('hub-admin', { body });
   if (error) {
@@ -1364,10 +1427,10 @@ async function drawAdmin() {
   };
   // bezpečnostní deník
   const LOG = { login: 'přihlášení heslem', mfa_verified: 'ověřeno kódem 2FA', mfa_enrolled: 'nastavil(a) 2FA', logout: 'odhlášení', password_changed: 'změnil(a) heslo',
-    user_created: 'založil(a) účet', password_reset: 'vygeneroval(a) nové heslo', mfa_reset: 'resetoval(a) 2FA', signed_out_everywhere: 'odhlásil(a) ze všech zařízení', user_blocked: 'zablokoval(a)', user_unblocked: 'povolil(a)' };
+    user_created: 'založil(a) účet', password_reset: 'vygeneroval(a) nové heslo', mfa_reset: 'resetoval(a) 2FA', signed_out_everywhere: 'odhlásil(a) ze všech zařízení', user_blocked: 'zablokoval(a)', user_unblocked: 'povolil(a)', shoptet_stock_in: 'naskladnil(a) do Shoptetu' };
   try {
     const rows = check(await sb.from('hub_audit').select('*').order('at', { ascending: false }).limit(60));
-    $('#auditBox').innerHTML = rows.length ? `<div class="timeline audit">${rows.map(r => `<div><b>${esc(userName(r.actor) || '—')}</b> ${esc(LOG[r.action] || r.action)}${r.target ? ` → <b>${esc(userName(r.target) || 'účet')}</b>` : ''}${r.detail?.scope === 'global' ? ' (všude)' : ''}<br>${czDateTime(r.at)}${r.detail?.ua ? ` · <span title="${esc(r.detail.ua)}">${esc(/iPhone|Android/i.test(r.detail.ua) ? 'telefon' : 'počítač')}</span>` : ''}</div>`).join('')}</div>` : '<div class="muted small">Zatím žádné události.</div>';
+    $('#auditBox').innerHTML = rows.length ? `<div class="timeline audit">${rows.map(r => `<div><b>${esc(userName(r.actor) || '—')}</b> ${esc(LOG[r.action] || r.action)}${r.target ? ` → <b>${esc(userName(r.target) || 'účet')}</b>` : ''}${r.detail?.scope === 'global' ? ' (všude)' : ''}${r.action === 'shoptet_stock_in' ? ` (${r.detail?.ok ?? 0} ok${r.detail?.failed ? ', ' + r.detail.failed + ' chyb' : ''})` : ''}<br>${czDateTime(r.at)}${r.detail?.ua ? ` · <span title="${esc(r.detail.ua)}">${esc(/iPhone|Android/i.test(r.detail.ua) ? 'telefon' : 'počítač')}</span>` : ''}${r.detail?.ver ? ` · v${esc(r.detail.ver)}` : ''}</div>`).join('')}</div>` : '<div class="muted small">Zatím žádné události.</div>';
   } catch (err) { $('#auditBox').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
 }
 
@@ -1588,7 +1651,8 @@ async function renderReceipt(id) {
     <span class="grow"></span>
     <div class="m hide-m"><span>Naskladněno</span><b id="sbStock">0/0</b></div>
     <button class="btn hide-m" id="exportCsv" title="Stáhnout CSV (kód; počet; nákupní cena)">⬇ <span class="hide-xs">CSV</span></button>
-    <button class="btn primary" id="copyStock">📋 <span class="hide-xs">Kopírovat pro Shoptet</span></button>`;
+    <button class="btn" id="copyStock" title="Zkopíruje kódy a počty pro ruční zápis">📋 <span class="hide-xs">Kopírovat</span></button>
+    <button class="btn primary" id="pushShoptet" title="Přidá položky do skladu ve Shoptetu">⬆ <span class="hide-xs">Naskladnit do Shoptetu</span></button>`;
   document.body.appendChild(bar);
   const onScroll = () => $('#edTop')?.classList.toggle('scrolled', scrollY > 4);
   addEventListener('scroll', onScroll, { passive: true });
@@ -1630,7 +1694,7 @@ async function renderReceipt(id) {
       <label class="si-chk" title="Naskladněno v Shoptetu"><input type="checkbox" data-k="stocked" ${it.stocked ? 'checked' : ''}><span></span></label>
       <div class="si-info">
         <div class="it-name"><span class="si-n">${n}.</span> ${esc(it.name) || '<span class="muted">Bez názvu</span>'}</div>
-        <div class="it-sub">${sub}${it.priceSrc ? ` <span class="tag blue" title="Nákupní cena předvyplněna">${esc(it.priceSrc)}</span>` : ''}</div>
+        <div class="it-sub">${sub}${it.priceSrc ? ` <span class="tag blue" title="Nákupní cena předvyplněna">${esc(it.priceSrc)}</span>` : ''}${it.shoptetSent ? ` <span class="tag ok" title="Odesláno do Shoptetu ${it.shoptetAt ? esc(czDateTime(it.shoptetAt)) : ''}">ve Shoptetu ✓</span>` : ''}</div>
       </div>
       <div class="si-f" data-l="Nákup / ks bez DPH"><div class="fld"><input data-k="priceInput" inputmode="decimal" value="${esc(it.priceInput || '')}" placeholder="cena" class="${it.priceInput && l.price == null ? 'bad' : ''}"><span class="suf">${cs}</span></div>
         <small class="muted" data-o="calc">${it.priceInput && /[*/+]/.test(it.priceInput) && l.price != null ? '= ' + numStr(Calc.r2(l.price * 100) / 100) + ' ' + cs : ''}</small></div>
@@ -1841,6 +1905,39 @@ async function renderReceipt(id) {
     const txt = list.map(i => `${i.code}\t${numStr(i.qty)}`).join('\n');
     try { await navigator.clipboard.writeText(txt); toast(`Zkopírováno ${list.length} řádků: kód ⇥ počet${todo().length ? ' (jen nenaskladněné)' : ''}`); }
     catch { modal({ title: 'Zkopíruj pro Shoptet', body: `<textarea rows="10" readonly>${esc(txt)}</textarea>` }); }
+  };
+  const busy = (b, on, html) => { b.disabled = on; if (on) { b.dataset.html = b.innerHTML; b.innerHTML = `<span class="spin"></span> ${html}`; } else b.innerHTML = b.dataset.html; };
+  $('#pushShoptet', bar).onclick = async e => {
+    const btn = e.currentTarget;
+    const stc = cfg(); const stockId = Number(stc.shoptetStockId) || 1; const stockName = stc.shoptetStockName || 'sklad ' + stockId;
+    await save();
+    const list = rc.items.filter(i => i.code && !i.stocked && !i.shoptetSent && toNum(i.qty) > 0);
+    if (!list.length) return toast('Není co posílat: položky jsou buď už naskladněné, nebo nemají kód a počet.', true);
+    const big = list.filter(i => toNum(i.qty) >= 5000).length;
+    const ok = await modal({
+      title: 'Naskladnit do Shoptetu?',
+      body: `<p>Do skladu <b>${esc(stockName)}</b> se <b>přidá</b>:</p>
+        <div class="push-list">${list.map(i => `<div><code>${esc(i.code)}</code><span>${esc(i.name)}${i.variant ? ', ' + esc(i.variant) : ''}</span><b>+${numStr(i.qty)} ${esc(i.unit || 'ks')}</b></div>`).join('')}</div>
+        ${big ? `<p class="warn-t">⚠ ${big} položek má velké množství — zkontroluj, že počty sedí.</p>` : ''}
+        <p class="muted small">Položky označené jako naskladněné se neposílají. Zápis do Shoptetu už jedním klikem nevrátíš.</p>`,
+      actions: [{ label: 'Zrušit', value: false }, { label: `Naskladnit ${list.length} ${list.length === 1 ? 'položku' : list.length < 5 ? 'položky' : 'položek'}`, value: true, cls: 'primary' }],
+    });
+    if (!ok) return;
+    busy(btn, true, 'Posílám…');
+    try {
+      const r = await shoptetCall({ action: 'stock_in', receiptId: rc.id, stockId, items: list.map(i => ({ id: i.id, code: i.code, amount: toNum(i.qty) })) });
+      let good = 0; const bad = [];
+      for (const x of r.results) {
+        const it = rc.items.find(i => i.id === x.id); if (!it) continue;
+        if (x.status === 'ok' || x.status === 'duplicate') { it.shoptetSent = true; it.stocked = true; it.shoptetAt = new Date().toISOString(); if (x.status === 'ok') good++; }
+        if (x.status !== 'ok') bad.push(x);
+      }
+      drawItems(); markDirty(); await save();
+      if (!bad.length) toast(`Naskladněno do Shoptetu: ${good} ${good === 1 ? 'položka' : 'položek'} ✓`);
+      else await modal({ title: good ? `Naskladněno ${good}, ale ${bad.length} se nepovedlo` : 'Naskladnění se nepovedlo',
+        body: `<div class="push-list err">${bad.map(x => `<div><code>${esc(x.code)}</code><span>${esc(x.message || x.status)}</span></div>`).join('')}</div><p class="muted small">Co se povedlo, je označené. Ostatní můžeš po opravě poslat znovu.</p>`, actions: [{ label: 'Rozumím', value: null, cls: 'primary' }] });
+    } catch (err) { toast(err.message, true); }
+    busy(btn, false);
   };
   $('#exportCsv', bar).onclick = () => {
     const rows = [['code', 'name', 'variant', 'amount', 'purchasePriceCzkNoVat', 'purchasePrice' + rc.currency, 'priceVat', 'marginPct']];

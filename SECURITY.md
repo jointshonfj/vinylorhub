@@ -12,8 +12,8 @@
 | Přehled | Bezpečnostní deník (Můj účet → správce): přihlášení, 2FA, změny hesel, zakládání a blokace účtů. |
 | Tajné klíče | V repozitáři ani v prohlížeči nejsou žádné tajné klíče. `config.js` obsahuje jen veřejný (publishable) klíč — data chrání RLS. |
 
-## Shoptet API (připravené pravidlo pro budoucnost)
-- API token Shoptetu se uloží **jen** do Supabase → Edge Functions → **Secrets** (např. `SHOPTET_API_TOKEN`).
+## Shoptet API (napojeno od v0.8.0)
+- API token Shoptetu je **jen** v Supabase → Edge Functions → **Secrets** (`SHOPTET_API_TOKEN`).
 - Nikdy do tabulky, do `config.js`, do GitHubu ani do prohlížeče.
 - Volat ho bude jen Edge Function, která ověří přihlášení s 2FA a roli a každé volání zapíše do bezpečnostního deníku.
 
@@ -28,3 +28,9 @@
    - (placený tarif) *Leaked password protection* a *Session timeouts*.
 5. Smaž soubor `PRVNI-HESLA-ONLINE.txt` z plochy — hesla v něm už neplatí, ale nemají se nikde válet.
 6. Do GitHubu nahrávej **jen obsah složky `online`** (nikdy `lokalni-verze`, `.env` ani soubory s hesly).
+
+### Naskladnění do Shoptetu — pojistky
+- Volá se jen přes funkci `hub-shoptet` (přihlášení + 2FA + aktivní účet); každé naskladnění zapíše záznam do bezpečnostního deníku.
+- Posílá se jen **přírůstek** (`amountChange`), nikdy absolutní přepsání skladu.
+- Každá položka se před odesláním zamkne v tabulce `shoptet_stock_log` (jedna řádka = jedna položka příjemky), takže se nikdy nepošle dvakrát. Při výpadku spojení zámek zůstává a před opakováním je nutné zkontrolovat stav ve Shoptetu.
+- Položky označené jako naskladněné (včetně importu z Excelu) se neposílají.

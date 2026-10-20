@@ -49,3 +49,6 @@ create policy hub_audit_read on public.hub_audit for select to authenticated usi
 -- 6) Jen pro service roli (Edge Function hub-admin): odhlášení ze všech zařízení, přehled 2FA
 -- hub_revoke_sessions(p_user uuid)  → delete from auth.sessions where user_id = p_user
 -- hub_users_security()              → id, last_sign_in_at, mfa, banned
+
+-- 7) Naskladnění do Shoptetu: zámek proti dvojímu odeslání (zapisuje jen Edge Function hub-shoptet)
+-- shoptet_stock_log(receipt_id, item_id, code, amount, stock_id, request_id, actor, at) — primary key (receipt_id, item_id)
