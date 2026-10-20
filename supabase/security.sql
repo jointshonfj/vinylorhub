@@ -52,3 +52,6 @@ create policy hub_audit_read on public.hub_audit for select to authenticated usi
 
 -- 7) Naskladnění do Shoptetu: zámek proti dvojímu odeslání (zapisuje jen Edge Function hub-shoptet)
 -- shoptet_stock_log(receipt_id, item_id, code, amount, stock_id, request_id, actor, at) — primary key (receipt_id, item_id)
+
+-- 8) Překlopení nabídky do objednávky: zámek (zapisuje jen Edge Function hub-shoptet)
+-- shoptet_order_log(offer_id PK, order_code, actor, total_offer, total_shoptet, at)

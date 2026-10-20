@@ -34,3 +34,10 @@
 - Posílá se jen **přírůstek** (`amountChange`), nikdy absolutní přepsání skladu.
 - Každá položka se před odesláním zamkne v tabulce `shoptet_stock_log` (jedna řádka = jedna položka příjemky), takže se nikdy nepošle dvakrát. Při výpadku spojení zámek zůstává a před opakováním je nutné zkontrolovat stav ve Shoptetu.
 - Položky označené jako naskladněné (včetně importu z Excelu) se neposílají.
+
+### Překlopení nabídky do objednávky — pojistky (v0.9.0)
+- Volá se přes `hub-shoptet` (přihlášení + 2FA); do bezpečnostního deníku se zapisuje číslo nabídky, objednávky a obě částky.
+- Funkce si nabídku načte sama z databáze (z prohlížeče nepřijímá ceny ani položky), takže ceny nejdou podvrhnout.
+- Jedna nabídka = nejvýš jedna objednávka: před odesláním se zamkne v tabulce `shoptet_order_log`.
+- Před odesláním se zkontroluje zákazník, položky a adresa; srozumitelné chyby se vrátí uživateli.
+- E-mail zákazníkovi se z objednávky standardně neodesílá (zapíná se v dialogu).

@@ -724,7 +724,8 @@ async function renderEditor(id) {
             <label>Číslo objednávky v Shoptetu</label>
             <input data-f="shoptetOrder" value="${esc(o.shoptetOrder)}" placeholder="např. 2026001234">
           </div>
-          <button class="btn sm" id="copyShoptet" style="margin-top:12px;width:100%" title="Zkopíruje kódy a množství pro rychlé založení objednávky">📋 Kopírovat položky pro Shoptet</button>
+          <div id="toShoptetBox" style="margin-top:12px"></div>
+          <button class="btn sm" id="copyShoptet" style="margin-top:8px;width:100%" title="Zkopíruje kódy a množství pro ruční založení objednávky">📋 Kopírovat položky pro Shoptet</button>
         </div>
       </section>
 
@@ -1087,11 +1088,72 @@ async function renderEditor(id) {
       $('#stBadge').innerHTML = stat(o.status);
       $('#shoptetBox').hidden = o.status !== 'confirmed';
       $('[data-f="shoptetOrder"]').value = o.shoptetOrder || '';
+      drawToShoptet();
       history = check(await sb.from('offer_history').select('*').eq('offer_id', o.id).order('at'));
       drawHistory();
       toast('Stav: ' + STATUSES[o.status]);
     } catch (err) { toast(err.message, true); }
   };
+  // --- překlopení nabídky do objednávky ve Shoptetu ---
+  function drawToShoptet() {
+    const box = $('#toShoptetBox');
+    box.innerHTML = o.shoptetOrder && o.status === 'confirmed'
+      ? `<div class="sh-linked"><span class="mg ok">Objednávka ve Shoptetu</span> <b class="num-t">${esc(o.shoptetOrder)}</b></div>`
+      : `<button class="btn primary" id="toShoptet" style="width:100%" title="Založí ve Shoptetu objednávku z této nabídky">🛒 Překlopit do Shoptetu</button>`;
+    const b = $('#toShoptet'); if (b) b.onclick = flipToShoptet;
+  }
+  async function flipToShoptet(e) {
+    const btn = e.currentTarget;
+    await save();
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Načítám…';
+    let opts;
+    try { opts = await shoptetCall({ action: 'order_options' }); if (!opts.ok) throw new Error('Nepodařilo se načíst způsoby platby a dopravy ze Shoptetu.'); }
+    catch (err) { toast(err.message, true); drawToShoptet(); return; }
+    drawToShoptet();
+    let mem = {}; try { mem = JSON.parse(ls.get('vh_sh_order') || '{}'); } catch {}
+    const pick = (list, remembered, re) => (list.find(x => x.guid === remembered) || list.find(x => re.test(x.name)) || list[0] || {}).guid;
+    const payDef = pick(opts.payments, mem.pay, /Bankovním převodem/i), shipDef = pick(opts.shippings, mem.ship, /Osobní odběr.*Bez Palety/i);
+    const stDef = opts.statuses.some(x => x.id === mem.status) ? mem.status : -1;
+    const t = Calc.totals(o, step);
+    const sel = (id, list, cur) => `<select id="${id}">${list.map(x => `<option value="${esc(x.guid ?? x.id)}" ${String(x.guid ?? x.id) === String(cur) ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`;
+    const res = await modal({
+      title: 'Překlopit do Shoptetu',
+      body: `<div class="sh-sum"><div><span class="muted">Zákazník</span><b>${esc(custLabel(o.customer))}</b></div><div><span class="muted">Položek</span><b>${o.items.length}</b></div><div><span class="muted">Celkem s DPH</span><b class="num-t">${M(t.total)} Kč</b></div></div>
+        <div class="form" style="grid-template-columns:1fr;gap:10px">
+          <div><label for="mPay">Způsob platby</label>${sel('mPay', opts.payments, payDef)}</div>
+          <div><label for="mShip">Způsob dopravy</label>${sel('mShip', opts.shippings, shipDef)}</div>
+          <div><label for="mShipP">Cena dopravy s DPH</label><div class="fld"><input id="mShipP" inputmode="decimal" value="0"><span class="suf">Kč</span></div></div>
+          <div><label for="mSt">Stav nové objednávky</label>${sel('mSt', opts.statuses.map(x => ({ guid: x.id, name: x.name })), stDef)}</div>
+          <label class="trust"><input type="checkbox" id="mMail"> Poslat zákazníkovi e-mail s objednávkou <span class="muted">— jinak se neodešle nic</span></label>
+        </div>
+        <p class="muted small">Ceny a slevy se přenesou přesně podle nabídky. Z nabídky se stane objednávka a nabídka přejde do stavu „Překlopena do Shoptetu“. Objednávka se zamkne proti dvojímu založení.</p>`,
+      actions: [{ label: 'Zrušit', value: null }, { label: '🛒 Založit objednávku', value: bd => ({
+        paymentGuid: $('#mPay', bd).value, paymentName: $('#mPay', bd).selectedOptions[0].textContent,
+        shippingGuid: $('#mShip', bd).value, shippingName: $('#mShip', bd).selectedOptions[0].textContent,
+        shippingPriceVat: toNum($('#mShipP', bd).value), statusId: Number($('#mSt', bd).value), sendEmail: $('#mMail', bd).checked,
+      }), cls: 'primary' }],
+    });
+    if (!res) return;
+    ls.set('vh_sh_order', JSON.stringify({ pay: res.paymentGuid, ship: res.shippingGuid, status: res.statusId }));
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Zakládám objednávku…';
+    try {
+      const r = await shoptetCall({ action: 'order_create', offerId: o.id, ...res });
+      if (!r.ok) {
+        await modal({ title: 'Objednávku se nepodařilo založit', body: `<ul class="problems">${r.problems.map(x => `<li>${esc(x)}</li>`).join('')}</ul><p class="muted small">Nic se ve Shoptetu nevytvořilo. Oprav údaje v nabídce a zkus to znovu.</p>`, actions: [{ label: 'Rozumím', value: null, cls: 'primary' }] });
+        drawToShoptet(); return;
+      }
+      o.status = 'confirmed'; o.shoptetOrder = r.code;
+      $$('#statusPick button').forEach(x => x.classList.toggle('on', x.dataset.s === o.status));
+      $('#stBadge').innerHTML = stat(o.status);
+      $('#shoptetBox').hidden = false; $('[data-f="shoptetOrder"]').value = r.code;
+      const fresh = check(await sb.from('offers').select('version').eq('id', o.id).single()); o.version = fresh.version;
+      history = check(await sb.from('offer_history').select('*').eq('offer_id', o.id).order('at')); drawHistory(); drawToShoptet();
+      const link = r.adminUrl ? `<p><a class="btn" href="${esc(r.adminUrl)}" target="_blank" rel="noopener">Otevřít objednávku ve Shoptetu ↗</a></p>` : '';
+      await modal({ title: `Objednávka ${r.code} založena ✓`, body: `<p>Celkem s DPH: <b>${M(r.offerTotal)} Kč</b> v nabídce · <b>${r.shoptetTotal == null ? '—' : M(r.shoptetTotal) + ' Kč'}</b> ve Shoptetu${r.toPay != null ? ` (k úhradě ${esc(String(r.toPay))} Kč)` : ''}.</p>${link}
+        ${r.warnings?.length ? `<ul class="problems">${r.warnings.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`, actions: [{ label: 'Hotovo', value: null, cls: 'primary' }] });
+    } catch (err) { toast(err.message, true); drawToShoptet(); }
+  }
+  drawToShoptet();
   $('#copyShoptet').onclick = async () => {
     const txt = o.items.filter(i => i.code).map(i => `${i.code}\t${numStr(i.qty)}\t${i.name}${i.variant ? ', ' + i.variant : ''}`).join('\n');
     if (!txt) return toast('V nabídce nejsou položky s kódem', true);
@@ -1427,7 +1489,7 @@ async function drawAdmin() {
   };
   // bezpečnostní deník
   const LOG = { login: 'přihlášení heslem', mfa_verified: 'ověřeno kódem 2FA', mfa_enrolled: 'nastavil(a) 2FA', logout: 'odhlášení', password_changed: 'změnil(a) heslo',
-    user_created: 'založil(a) účet', password_reset: 'vygeneroval(a) nové heslo', mfa_reset: 'resetoval(a) 2FA', signed_out_everywhere: 'odhlásil(a) ze všech zařízení', user_blocked: 'zablokoval(a)', user_unblocked: 'povolil(a)', shoptet_stock_in: 'naskladnil(a) do Shoptetu' };
+    user_created: 'založil(a) účet', password_reset: 'vygeneroval(a) nové heslo', mfa_reset: 'resetoval(a) 2FA', signed_out_everywhere: 'odhlásil(a) ze všech zařízení', user_blocked: 'zablokoval(a)', user_unblocked: 'povolil(a)', shoptet_stock_in: 'naskladnil(a) do Shoptetu', shoptet_order_create: 'založil(a) objednávku ve Shoptetu' };
   try {
     const rows = check(await sb.from('hub_audit').select('*').order('at', { ascending: false }).limit(60));
     $('#auditBox').innerHTML = rows.length ? `<div class="timeline audit">${rows.map(r => `<div><b>${esc(userName(r.actor) || '—')}</b> ${esc(LOG[r.action] || r.action)}${r.target ? ` → <b>${esc(userName(r.target) || 'účet')}</b>` : ''}${r.detail?.scope === 'global' ? ' (všude)' : ''}${r.action === 'shoptet_stock_in' ? ` (${r.detail?.ok ?? 0} ok${r.detail?.failed ? ', ' + r.detail.failed + ' chyb' : ''})` : ''}<br>${czDateTime(r.at)}${r.detail?.ua ? ` · <span title="${esc(r.detail.ua)}">${esc(/iPhone|Android/i.test(r.detail.ua) ? 'telefon' : 'počítač')}</span>` : ''}${r.detail?.ver ? ` · v${esc(r.detail.ver)}` : ''}</div>`).join('')}</div>` : '<div class="muted small">Zatím žádné události.</div>';
