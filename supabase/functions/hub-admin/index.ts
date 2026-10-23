@@ -53,8 +53,11 @@ Deno.serve(async (req) => {
       const name = String(b.name || '').trim().slice(0, 80), email = String(b.email || '').trim().toLowerCase();
       if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: 'Vyplň jméno a platný e-mail.' }, 400);
       const password = tempPassword();
+      // pozvánka na 2 minuty: databázová pojistka proti cizím registracím pustí jen e-mail, který správce právě zakládá
+      await sb.from('hub_invites').upsert({ email, expires_at: new Date(Date.now() + 120_000).toISOString(), created_by: u.user.id });
       const { data, error } = await sb.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name }, app_metadata: { hub_invited: true } });
-      if (error) return json({ error: error.message }, 400);
+      await sb.from('hub_invites').delete().eq('email', email);
+      if (error) return json({ error: /already|registered|exists/i.test(error.message) ? 'Uživatel s tímto e-mailem už existuje.' : error.message }, 400);
       const { error: e2 } = await sb.from('hub_profiles').insert({ id: data.user.id, name, email, role: b.role === 'admin' ? 'admin' : 'user', must_change: true });
       if (e2) { await sb.auth.admin.deleteUser(data.user.id); return json({ error: e2.message }, 400); }
       await audit('user_created', data.user.id, { email });

@@ -177,9 +177,15 @@ Deno.serve(async (req) => {
       const { error: le } = await sb.from('shoptet_order_log').insert({ offer_id: offerId, actor: u.user.id, total_offer: offerTotal });
       if (le) return json({ error: (le as { code?: string }).code === '23505' ? 'Z této nabídky už se objednávka zakládá nebo byla založena. Zkontroluj Shoptet.' : le.message }, 409);
 
+      // interní poznámka v objednávce (zákazník ji nevidí): odkud objednávka vznikla a z jaké nabídky
+      const { data: people } = await sb.from('hub_profiles').select('id, name').in('id', [offer.issued_by, u.user.id].filter(Boolean));
+      const nameOf = (id: string) => (people || []).find((x: { id: string }) => x.id === id)?.name || '';
+      const remark = `Vytvořeno z nabídky č. ${offer.number} ve Vinylor Hubu` + (nameOf(offer.issued_by) ? ` · vystavil(a): ${nameOf(offer.issued_by)}` : '') + (nameOf(u.user.id) ? ` · překlopil(a): ${nameOf(u.user.id)}` : '') + ` · ${new Date().toLocaleDateString('cs-CZ', { timeZone: 'Europe/Prague' })}`;
+
       const payload = {
         data: {
           externalCode: String(offer.number).slice(0, 255), email, phone: phone || undefined,
+          notes: { eshopRemark: remark.slice(0, 1000) },
           statusId, sourceId: -2, language: 'cs', vatPayer: true, vatMode: 'Normal', addressesEqual: true, stockId,
           paymentMethodGuid: payGuid, shippingGuid: shipGuid, currency: { code: 'CZK' },
           billingAddress: {

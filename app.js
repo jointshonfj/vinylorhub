@@ -1126,7 +1126,7 @@ async function renderEditor(id) {
           <div><label for="mSt">Stav nové objednávky</label>${sel('mSt', opts.statuses.map(x => ({ guid: x.id, name: x.name })), stDef)}</div>
           <label class="trust"><input type="checkbox" id="mMail"> Poslat zákazníkovi e-mail s objednávkou <span class="muted">— jinak se neodešle nic</span></label>
         </div>
-        <p class="muted small">Ceny a slevy se přenesou přesně podle nabídky. Z nabídky se stane objednávka a nabídka přejde do stavu „Překlopena do Shoptetu“. Objednávka se zamkne proti dvojímu založení.</p>`,
+        <p class="muted small">Ceny a slevy se přenesou přesně podle nabídky. Do <b>interní poznámky objednávky</b> ve Shoptetu se zapíše „Vytvořeno z nabídky č. ${esc(o.number)} ve Vinylor Hubu“ (zákazník ji nevidí). Nabídka přejde do stavu „Překlopena do Shoptetu“ a objednávka se zamkne proti dvojímu založení.</p>`,
       actions: [{ label: 'Zrušit', value: null }, { label: '🛒 Založit objednávku', value: bd => ({
         paymentGuid: $('#mPay', bd).value, paymentName: $('#mPay', bd).selectedOptions[0].textContent,
         shippingGuid: $('#mShip', bd).value, shippingName: $('#mShip', bd).selectedOptions[0].textContent,

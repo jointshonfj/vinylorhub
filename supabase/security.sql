@@ -55,3 +55,6 @@ create policy hub_audit_read on public.hub_audit for select to authenticated usi
 
 -- 8) Překlopení nabídky do objednávky: zámek (zapisuje jen Edge Function hub-shoptet)
 -- shoptet_order_log(offer_id PK, order_code, actor, total_offer, total_shoptet, at)
+
+-- 9) Pojistka registrací používá krátkodobé pozvánky: hub-admin zapíše e-mail do hub_invites na 2 minuty a teprve pak založí účet.
+-- Trigger hub_block_signup pustí jen účet s platnou pozvánkou (nebo s app_metadata.hub_invited = true).

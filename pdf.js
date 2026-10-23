@@ -8,13 +8,24 @@ const GREY = '#6b6b6b';
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('Nepodařilo se načíst ' + src));
+    s.src = src; s.onload = resolve;
+    s.onerror = () => { s.remove(); reject(new Error('Nepodařilo se načíst ' + src)); };
     document.head.appendChild(s);
   });
 }
+// při výpadku sítě zkusí načtení ještě 2× znovu (s jiným parametrem, ať se nepoužije chybná kopie z mezipaměti)
+async function loadWithRetry(src) {
+  for (let i = 0; ; i++) {
+    try { return await loadScript(i ? `${src}?r=${Date.now()}` : src); }
+    catch (e) { if (i >= 2) throw e; await new Promise(r => setTimeout(r, 600 * (i + 1))); }
+  }
+}
 let ready = null;
 function ensurePdfMake() {
-  if (!ready) ready = window.pdfMake && window.pdfMake.vfs ? Promise.resolve() : loadScript(PDFMAKE).then(() => loadScript(FONTS));
+  if (!ready) {
+    ready = (window.pdfMake && window.pdfMake.vfs ? Promise.resolve() : loadWithRetry(PDFMAKE).then(() => loadWithRetry(FONTS)))
+      .catch(e => { ready = null; throw e; }); // neúspěch se nepamatuje, další pokus začne znovu
+  }
   return ready;
 }
 const images = {};
