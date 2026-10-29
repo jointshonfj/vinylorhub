@@ -1503,7 +1503,7 @@ async function drawAdmin() {
 // NASKLADNĚNÍ — příjemky od dodavatelů → naskladnění do Shoptetu
 // =====================================================================
 const STOCK_COLS = 'id,doc_no,supplier,date,currency,rate,transport_pct,items,note,total_czk,item_count,stocked_count,imported,created_by,last_edit_by,version,created_at,updated_at';
-const SK = { receipts: [], q: '', filter: ls.get('vh_sk_filter') || '' };
+const SK = { receipts: [], svozy: [], q: '', filter: ls.get('vh_sk_filter') || '' };
 const rcFromRow = r => ({
   id: r.id, docNo: r.doc_no || '', supplier: r.supplier || '', date: r.date, currency: r.currency, rate: Number(r.rate), transportPct: Number(r.transport_pct),
   items: r.items || [], note: r.note || '', imported: r.imported, createdBy: r.created_by, lastEditBy: r.last_edit_by, version: r.version,
@@ -1579,6 +1579,15 @@ function predictPrice(p, supplier, mem) {
 async function loadReceipts() {
   const rows = await fetchAll(() => sb.from('stock_receipts').select(STOCK_COLS).eq('deleted', false).order('created_at', { ascending: false }));
   SK.receipts = rows.map(r => ({ ...rcFromRow(r), item_count: r.item_count, stocked_count: r.stocked_count, total_czk: Number(r.total_czk) }));
+  // svozy z OrderJoi (doručené a naskladněné) se ukazují mezi příjemkami
+  const [sh, au] = await Promise.all([
+    fetchAll(() => sb.from('oj_shipments').select('id,reference,title,note,status,delivered_at,stocked_at,created_at,lines').eq('deleted', false).in('status', ['arrived', 'stocked']).order('created_at', { ascending: false })),
+    fetchAll(() => sb.from('oj_aufs').select('id,shipment_id,amount_eur').not('shipment_id', 'is', null)),
+  ]);
+  SK.svozy = sh.map(x => { const ls_ = (x.lines || []).filter(l => !l.skip); return {
+    svoz: true, id: x.id, docNo: x.reference || x.title, supplier: x.note || 'Svoz', date: ymd(new Date(x.stocked_at || x.delivered_at || x.created_at)),
+    item_count: ls_.length, stocked_count: ls_.filter(l => l.stocked).length, eur: au.filter(a => a.shipment_id === x.id).reduce((t, a) => t + Number(a.amount_eur || 0), 0),
+    items: ls_.map(l => ({ code: l.code, name: l.name })), note: '', }; });
 }
 async function newReceipt(prefill = {}) {
   const st = cfg();
@@ -1614,12 +1623,12 @@ async function renderStock() {
 function drawStockStats() {
   const month = ymd(new Date()).slice(0, 7);
   const thisMonth = SK.receipts.filter(r => String(r.date).slice(0, 7) === month);
-  const todo = SK.receipts.filter(r => ['open', 'part'].includes(rcStatus(r)));
+  const todo = [...SK.receipts, ...SK.svozy].filter(r => ['open', 'part'].includes(rcStatus(r)));
   const todoItems = todo.reduce((a, r) => a + (r.item_count - r.stocked_count), 0);
   let sell = 0, cost = 0;
   for (const r of SK.receipts) { const t = stockTotals(r); sell += t.sell; cost += t.sell ? t.cost : 0; }
   $('#skStats').innerHTML = `<div class="stats">
-    <div class="panel stat" style="--c:var(--s-postponed)"><div class="k">Čeká na naskladnění</div><div class="v">${todoItems}</div><div class="s">${todo.length} příjemek s nenaskladněnými položkami</div></div>
+    <div class="panel stat" style="--c:var(--s-postponed)"><div class="k">Čeká na naskladnění</div><div class="v">${todoItems}</div><div class="s">${todo.length} dokladů s nenaskladněnými položkami</div></div>
     <div class="panel stat" style="--c:var(--s-sent)"><div class="k">Nakoupeno tento měsíc</div><div class="v" data-n="${thisMonth.reduce((a, r) => a + r.total_czk, 0)}">0 Kč</div><div class="s">${thisMonth.length} příjemek, bez DPH</div></div>
     <div class="panel stat" style="--c:var(--brand)"><div class="k">Průměrná marže</div><div class="v">${pct(sell ? ((sell - cost) / sell) * 100 : null)}</div><div class="s">ze všech příjemek, bez DPH</div></div>
     <div class="panel stat" style="--c:var(--s-confirmed)"><div class="k">Příjemek celkem</div><div class="v">${SK.receipts.length}</div><div class="s">${SK.receipts.reduce((a, r) => a + r.item_count, 0)} položek</div></div>
@@ -1628,7 +1637,7 @@ function drawStockStats() {
 }
 function drawReceipts() {
   const q = fold(SK.q).trim();
-  const list = SK.receipts.filter(r => {
+  const list = [...SK.receipts, ...SK.svozy].sort((a, b) => String(b.date).localeCompare(String(a.date))).filter(r => {
     const s = rcStatus(r);
     if (SK.filter === 'todo' && !['open', 'part'].includes(s)) return false;
     if (SK.filter === 'done' && s !== 'done') return false;
@@ -1642,9 +1651,16 @@ function drawReceipts() {
     return;
   }
   el.innerHTML = `<div class="panel" style="overflow-x:auto"><table class="list rc-list">
-    <thead><tr><th>Doklad</th><th>Dodavatel</th><th>Datum</th><th>Naskladněno</th><th class="r">Náklad bez DPH</th><th class="r">Marže</th></tr></thead>
+    <thead><tr><th>Doklad</th><th>Dodavatel</th><th>Datum</th><th>Naskladněno</th><th class="r">Náklad</th><th class="r">Marže</th></tr></thead>
     <tbody>${list.map((r, i) => {
-      const t = stockTotals(r); const s = rcStatus(r); const p = r.item_count ? Math.round(100 * r.stocked_count / r.item_count) : 0;
+      const s = rcStatus(r); const p = r.item_count ? Math.round(100 * r.stocked_count / r.item_count) : 0;
+      if (r.svoz) return `<tr class="click" data-svoz="${r.id}" style="animation-delay:${Math.min(i, 20) * 15}ms">
+        <td class="nowrap"><b>${highlight(r.docNo || 'svoz', SK.q)}</b> <span class="tag blue" title="Svoz z OrderJoi">svoz</span></td>
+        <td>${highlight(r.supplier || '—', SK.q)}<div class="muted small">${r.item_count} položek · EUR</div></td>
+        <td class="nowrap">${czDate(r.date)}</td>
+        <td class="nowrap"><div class="prog" data-st="${s}"><i style="width:${p}%"></i></div><span class="small muted">${r.stocked_count}/${r.item_count} · ${RC_STATUS[s]}</span></td>
+        <td class="r nowrap num-t">${r.eur ? r.eur.toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €' : '—'}</td><td class="r muted">—</td></tr>`;
+      const t = stockTotals(r);
       return `<tr class="click" data-id="${r.id}" style="animation-delay:${Math.min(i, 20) * 15}ms">
         <td class="nowrap"><b>${highlight(r.docNo || 'bez čísla', SK.q)}</b>${r.imported ? ' <span class="tag grey" title="Importováno z Excelu">import</span>' : ''}</td>
         <td>${highlight(r.supplier || '—', SK.q)}<div class="muted small">${r.item_count} položek · ${r.currency}</div></td>
@@ -1654,7 +1670,7 @@ function drawReceipts() {
         <td class="r nowrap"><span class="mg ${marginCls(t.marginPct)}">${pct(t.marginPct)}</span></td>
       </tr>`;
     }).join('') || '<tr><td colspan="6" class="empty">Nic nenalezeno</td></tr>'}</tbody></table></div>`;
-  $$('tr.click', el).forEach(r => r.onclick = () => { location.hash = '#/s/' + r.dataset.id; });
+  $$('tr.click', el).forEach(r => r.onclick = () => { location.hash = r.dataset.svoz ? '#/svoz/' + r.dataset.svoz : '#/s/' + r.dataset.id; });
 }
 
 // ---------- editor příjemky ----------
