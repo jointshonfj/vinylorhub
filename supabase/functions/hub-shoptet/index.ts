@@ -4,6 +4,8 @@
 //   { action: 'status' }                                   → spojení, sklady, stavy objednávek (jen správce)
 //   { action: 'stock_in', receiptId, stockId, items: [{ id, code, amount }] }  → naskladnění (jen přírůstek, nikdy přepsání)
 //   { action: 'order_options' }                            → způsoby platby a dopravy, stavy objednávek (pro dialog překlopení)
+//   { action: 'oj_sync' }                                  → OrderJoi: načte objednávky ve stavu „Potřeba objednat“
+//   { action: 'svoz_stock_in', shipmentId, stockId }       → OrderJoi: svoz dorazil → naskladnění všech řádků
 //   { action: 'order_create', offerId, paymentGuid, shippingGuid, shippingPriceVat, statusId, sendEmail }  → nabídka → objednávka
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
@@ -222,6 +224,99 @@ Deno.serve(async (req) => {
       if (diff !== null && Math.abs(diff) > 0.05) warnings.push(`Celkem v nabídce je ${offerTotal.toFixed(2)} Kč, ve Shoptetu ${shoptetTotal.toFixed(2)} Kč (rozdíl ${diff.toFixed(2)} Kč). Zkontroluj objednávku.`);
       const adminUrl = typeof order.adminUrl === 'string' && order.adminUrl.startsWith('https://www.vinylor.cz/admin/') ? order.adminUrl : null;
       return json({ ok: true, code: order.code, adminUrl, offerTotal, offerNet, shoptetTotal: Number.isFinite(shoptetTotal) ? shoptetTotal : null, toPay: order.price?.toPay ?? null, warnings });
+    }
+    // ---- OrderJoi: objednávky ve stavu „Potřeba objednat“ → položky k objednání ----
+    if (b.action === 'oj_sync') {
+      const { data: cfg } = await sb.from('hub_settings').select('data').eq('id', 1).single();
+      const statusId = Number(cfg?.data?.ojStatusId) || 87;
+      const list: any[] = [];
+      for (let page = 1; page <= 5; page++) {
+        const r = await call('GET', `/orders?statusId=${statusId}&itemsPerPage=50&page=${page}`);
+        if (r.status !== 200) return json({ ok: false, error: 'Shoptet: ' + errText(r) });
+        list.push(...(r.json?.data?.orders || []));
+        if (page >= (r.json?.data?.paginator?.pageCount || 1)) break;
+      }
+      const now = new Date().toISOString();
+      const items: any[] = []; const prods = new Map<string, any>(); const seenOrders: string[] = [];
+      for (const o of list.slice(0, 150)) {
+        const d = await call('GET', '/orders/' + encodeURIComponent(o.code));
+        if (d.status !== 200) return json({ ok: false, error: `Objednávka ${o.code}: ` + errText(d) });
+        const od = d.json?.data?.order || {};
+        seenOrders.push(String(o.code));
+        const sum = new Map<string, any>();
+        for (const it of od.items || []) {
+          if (it.itemType !== 'product') continue;
+          const code = String(it.code || '').trim(); if (!code) continue;
+          const qty = Number(it.amount) || 0; if (qty <= 0) continue;
+          const key = o.code + '|' + code;
+          const ex = sum.get(key);
+          if (ex) { ex.qty += qty; continue; }
+          const customer = String(o.company || o.fullName || '').slice(0, 120);
+          sum.set(key, { key, order_code: String(o.code), code, name: String(it.name || code).slice(0, 250), qty, unit: String(it.amountUnit || 'ks').slice(0, 16), customer, order_date: String(o.creationTime || '').slice(0, 10), active: true, last_seen: now });
+          if (!prods.has(code)) prods.set(code, { code, name: String(it.name || code).slice(0, 250), shoptet_supplier: String(it.supplierName || '').slice(0, 120) });
+        }
+        items.push(...sum.values());
+        await sleep(150);
+      }
+      for (let i = 0; i < items.length; i += 200) {
+        const { error } = await sb.from('oj_items').upsert(items.slice(i, i + 200), { onConflict: 'key' });
+        if (error) return json({ ok: false, error: error.message });
+      }
+      const pl = [...prods.values()];
+      for (let i = 0; i < pl.length; i += 200) {
+        const { error } = await sb.from('oj_products').upsert(pl.slice(i, i + 200), { onConflict: 'code', ignoreDuplicates: true });
+        if (error) return json({ ok: false, error: error.message });
+      }
+      // doplnit dodavatele ze Shoptetu produktům, kterým ho ještě nikdo nenastavil
+      for (const p of pl) if (p.shoptet_supplier) await sb.from('oj_products').update({ shoptet_supplier: p.shoptet_supplier }).eq('code', p.code).eq('shoptet_supplier', '');
+      const keep = new Set(items.map(i => i.key));
+      const { data: act } = await sb.from('oj_items').select('key').eq('active', true).limit(10000);
+      const gone = (act || []).map((r: { key: string }) => r.key).filter((k: string) => !keep.has(k));
+      for (let i = 0; i < gone.length; i += 200) await sb.from('oj_items').update({ active: false }).in('key', gone.slice(i, i + 200));
+      await sb.from('hub_settings').update({ data: { ...(cfg?.data || {}), ojLastSync: now } }).eq('id', 1);
+      return json({ ok: true, orders: seenOrders.length, items: items.length, removed: gone.length, at: now });
+    }
+
+    // ---- OrderJoi: svoz dorazil → naskladnit všechny řádky do Shoptetu (jen přírůstek) ----
+    if (b.action === 'svoz_stock_in') {
+      const shipmentId = String(b.shipmentId || ''); const stockId = Number(b.stockId);
+      if (!/^[0-9a-f-]{36}$/.test(shipmentId) || !Number.isInteger(stockId)) return json({ error: 'Neplatný svoz nebo sklad.' }, 400);
+      const { data: sh } = await sb.from('oj_shipments').select('*').eq('id', shipmentId).eq('deleted', false).maybeSingle();
+      if (!sh) return json({ error: 'Svoz nenalezen.' }, 404);
+      if (!['arrived', 'stocked'].includes(sh.status)) return json({ error: 'Svoz musí být ve stavu „Dorazil“. Nejdřív ho tak označ.' }, 409);
+      const stocks = await call('GET', '/stocks');
+      if (!(stocks.json?.data?.stocks || []).some((s: any) => s.id === stockId)) return json({ error: 'Takový sklad ve Shoptetu neexistuje.' }, 400);
+      const lines: any[] = Array.isArray(sh.lines) ? sh.lines : [];
+      if (!lines.length || lines.length > 150) return json({ error: 'Svoz má 1 až 150 řádků.' }, 400);
+      const results: { id: string; code: string; status: string; message?: string }[] = [];
+      for (const ln of lines) {
+        const id = String(ln.id || '').slice(0, 40), code = String(ln.code || '').trim().slice(0, 64);
+        const amount = Number(ln.got ?? ln.qty);
+        if (ln.stocked) { results.push({ id, code, status: 'duplicate', message: 'Už naskladněno.' }); continue; }
+        if (ln.skip) { results.push({ id, code, status: 'skipped' }); continue; }
+        if (!id || !code || !Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) { results.push({ id, code, status: 'error', message: 'Neplatný kód nebo množství.' }); continue; }
+        const { error: le } = await sb.from('shoptet_svoz_log').insert({ shipment_id: shipmentId, line_id: id, code, amount, stock_id: stockId, actor: u.user.id });
+        if (le) { results.push({ id, code, status: (le as { code?: string }).code === '23505' ? 'duplicate' : 'error', message: (le as { code?: string }).code === '23505' ? 'Tato položka už byla do Shoptetu odeslána.' : le.message }); continue; }
+        let r;
+        try { r = await call('PATCH', `/stocks/${stockId}/movements`, { data: [{ productCode: code, amountChange: amount }] }); }
+        catch (e) { r = { status: 0, json: null, text: (e as Error).message }; }
+        const failed = r.status !== 200 || (r.json?.errors && r.json.errors.length);
+        if (failed) {
+          if (r.status !== 0) await sb.from('shoptet_svoz_log').delete().eq('shipment_id', shipmentId).eq('line_id', id);
+          results.push({ id, code, status: 'error', message: r.status === 0 ? 'Spojení se Shoptetem se přerušilo — ověř stav ve Shoptetu a napiš správci, než to zkusíš znovu.' : errText(r) });
+        } else {
+          await sb.from('shoptet_svoz_log').update({ request_id: r.json?.metadata?.requestId ?? null }).eq('shipment_id', shipmentId).eq('line_id', id);
+          results.push({ id, code, status: 'ok' });
+        }
+        await sleep(250);
+      }
+      const okIds = new Set(results.filter(x => x.status === 'ok').map(x => x.id));
+      const { data: fresh } = await sb.from('oj_shipments').select('lines').eq('id', shipmentId).single();
+      const upd = (fresh?.lines || lines).map((l: any) => okIds.has(String(l.id)) ? { ...l, stocked: true } : l);
+      const all = upd.every((l: any) => l.stocked || l.skip);
+      await sb.from('oj_shipments').update({ lines: upd, stock_id: stockId, updated_at: new Date().toISOString(), ...(all ? { status: 'stocked', stocked_at: new Date().toISOString() } : {}) }).eq('id', shipmentId);
+      await audit('shoptet_svoz_stock_in', { shipment: shipmentId, stock: stockId, ok: okIds.size, failed: results.filter(x => x.status === 'error').length });
+      return json({ ok: true, results, all });
     }
     return json({ error: 'Neznámá akce' }, 400);
   } catch (e) {
