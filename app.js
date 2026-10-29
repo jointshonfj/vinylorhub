@@ -2152,7 +2152,9 @@ function drawOjOrders(infos) {
     if (!q) return true;
     return fold([i.o.code, i.o.customer, i.o.note, ...i.aufs.map(a => a.auf_number), ...i.items.map(x => x.code + ' ' + x.name)].join(' ')).includes(q);
   });
+  const waiting = OJ.shipments.filter(x => x.status === 'arrived' && x.lines.some(l => !l.stocked && !l.skip));
   el.innerHTML = `
+  ${waiting.map(x => `<a class="panel panel-b oj-banner" href="#/svoz/${x.id}"><span style="font-size:22px">📥</span><div class="grow"><b>Svoz ${esc(x.reference || x.title)} dorazil a čeká na naskladnění</b><div class="muted small">${x.lines.filter(l => !l.stocked && !l.skip).length} řádků · otevři svoz a klikni na „Naskladnit vše do Shoptetu“</div></div><span class="btn primary">Otevřít svoz ›</span></a>`).join('')}
   <div class="stats oj-cards">${cards.map(([k, ic, l, n, c]) => `<button class="panel stat click ${OJ.card === k ? 'on' : ''}" data-card="${k}" style="--c:${c}"><div class="k">${ic}</div><div class="v">${n}</div><div class="s">${l}</div></button>`).join('')}</div>
   <div class="topbar" style="margin:6px 0 12px;gap:10px"><div class="search grow" style="max-width:520px"><span class="ic">⌕</span><input id="ojq" placeholder="Hledat objednávku, AUF, zákazníka, položku…" value="${esc(OJ.q)}"></div>
     <div class="chips" id="ojF">${[['active', 'Aktivní'], ['done', 'Vyřízené'], ['archive', 'Archiv']].map(([k, l]) => `<button class="chip ${!OJ.card && OJ.filter === k ? 'on' : ''}" data-f="${k}">${l} <span class="tag grey">${bucketCnt(k)}</span></button>`).join('')}</div>
@@ -2250,7 +2252,7 @@ async function renderOjOrder(code) {
       ${inf.aufs.length ? `<h3 style="margin:18px 0 8px">AUF — potvrzení dodavatele</h3>` : ''}
       ${inf.aufs.map(a => { const s = ojSup(a.supplier_id); const sh = OJ.shipments.find(x => x.id === a.shipment_id);
         return `<div class="panel panel-b" style="margin-bottom:12px" data-auf="${a.id}"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b>${ojSupLabel(s)}</b>${aufBadge(a)}
-          ${a.auf_number ? `<b>${esc(a.auf_number)}</b>` : ''}${a.amount_eur != null ? `<span>${fmtEur(a.amount_eur)}</span>` : ''}${sh ? `<a class="tag blue" href="#/svoz/${sh.id}">${esc(sh.reference || 'svoz')}</a>` : ''}
+          ${a.auf_number ? `<b>${esc(a.auf_number)}</b>` : ''}${a.amount_eur != null ? `<span>${fmtEur(a.amount_eur)}</span>` : ''}${sh ? `<a class="tag blue" href="#/svoz/${sh.id}">${esc(sh.reference || 'svoz')}</a>` : ''}${sh && sh.status === 'arrived' ? `<a class="btn sm primary" href="#/svoz/${sh.id}">📥 Naskladnit svoz</a>` : ''}
           ${a.delivery_status === 'issue' ? `<span class="tag" style="background:var(--s-rejected-bg,#fdd);color:var(--s-rejected,#c00)">${a.issue_resolved_at ? 'reklamace vyřešena' : 'reklamace'}</span>` : a.delivered_at ? '<span class="tag blue">doručeno</span>' : ''}<span class="grow"></span>
           <button class="btn sm" data-amail="${a.id}">✉ E-mail</button>
           ${a.status === 'sent' ? `<button class="btn sm primary" data-conf="${a.id}">Zadat AUF</button>` : ''}${a.status === 'confirmed' && !a.shipment_id ? `<button class="btn sm" data-conf="${a.id}">Upravit AUF</button>` : ''}
@@ -2329,8 +2331,8 @@ function drawOjShipments() {
   const el = $('#ojBody'); const free = OJ.aufs.filter(a => a.status === 'confirmed' && !a.shipment_id);
   const rows = OJ.shipments.map(s => { const as = OJ.aufs.filter(a => a.shipment_id === s.id); return { s, as, total: as.reduce((x, a) => x + Number(a.amount_eur || 0), 0) }; });
   el.innerHTML = `<div style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn primary" id="shNew">＋ Nový svoz</button><span class="muted small">${free.length ? `${free.length} potvrzených AUF čeká na zařazení do svozu` : 'všechny potvrzené AUF jsou ve svozu'}</span></div>
-  ${rows.length ? `<div class="panel" style="overflow-x:auto"><table class="list"><thead><tr><th>Svoz</th><th>Dodavatel / poznámka</th><th>AUF</th><th class="r">Celkem</th><th>Stav</th><th>Doručeno</th></tr></thead><tbody>
-  ${rows.map(({ s, as, total }) => `<tr class="click" data-id="${s.id}"><td><b>${esc(s.reference || s.title)}</b></td><td>${esc(s.note) || '—'}</td><td>${as.length}</td><td class="r nowrap">${fmtEur(total)}</td><td>${shipBadge(s.status)}</td><td class="nowrap">${s.delivered_at ? czDate(s.delivered_at) : '—'}</td></tr>`).join('')}</tbody></table></div>`
+  ${rows.length ? `<div class="panel" style="overflow-x:auto"><table class="list"><thead><tr><th>Svoz</th><th>Dodavatel / poznámka</th><th>AUF</th><th class="r">Celkem</th><th>Stav</th><th>Doručeno</th><th></th></tr></thead><tbody>
+  ${rows.map(({ s, as, total }) => `<tr class="click" data-id="${s.id}"><td><b>${esc(s.reference || s.title)}</b></td><td>${esc(s.note) || '—'}</td><td>${as.length}</td><td class="r nowrap">${fmtEur(total)}</td><td>${shipBadge(s.status)}</td><td class="nowrap">${s.delivered_at ? czDate(s.delivered_at) : '—'}</td><td class="nowrap">${s.status === 'arrived' && s.lines.some(l => !l.stocked && !l.skip) ? '<span class="btn sm primary">📥 Naskladnit</span>' : ''}</td></tr>`).join('')}</tbody></table></div>`
   : `<div class="panel empty-big"><div class="ill">🚛</div><h3>Zatím žádný svoz</h3><p>Svoz je sběrná doprava od dodavatele. Zařadíš do něj AUF, které dodavatel potvrdil.</p></div>`}`;
   $('#shNew').onclick = ojNewShipment;
   $$('tr.click', el).forEach(r => r.onclick = () => { location.hash = '#/svoz/' + r.dataset.id; });
