@@ -258,6 +258,12 @@ Deno.serve(async (req) => {
         items.push(...sum.values());
         await sleep(150);
       }
+      // hlavičky objednávek (kód, datum, zákazník, stav ve Shoptetu); ručně zadané objednávky se nemažou
+      const ords = list.slice(0, 150).map((o: any) => ({ code: String(o.code), order_date: String(o.creationTime || '').slice(0, 10), customer: String(o.company || o.fullName || '').slice(0, 120), shoptet_status: String(o.status?.name || ''), active: true, updated_at: now }));
+      for (let i = 0; i < ords.length; i += 200) {
+        const { error } = await sb.from('oj_orders').upsert(ords.slice(i, i + 200), { onConflict: 'code' });
+        if (error) return json({ ok: false, error: error.message });
+      }
       for (let i = 0; i < items.length; i += 200) {
         const { error } = await sb.from('oj_items').upsert(items.slice(i, i + 200), { onConflict: 'key' });
         if (error) return json({ ok: false, error: error.message });
@@ -270,9 +276,14 @@ Deno.serve(async (req) => {
       // doplnit dodavatele ze Shoptetu produktům, kterým ho ještě nikdo nenastavil
       for (const p of pl) if (p.shoptet_supplier) await sb.from('oj_products').update({ shoptet_supplier: p.shoptet_supplier }).eq('code', p.code).eq('shoptet_supplier', '');
       const keep = new Set(items.map(i => i.key));
-      const { data: act } = await sb.from('oj_items').select('key').eq('active', true).limit(10000);
+      const { data: act } = await sb.from('oj_items').select('key').eq('active', true).eq('manual', false).limit(10000);
       const gone = (act || []).map((r: { key: string }) => r.key).filter((k: string) => !keep.has(k));
       for (let i = 0; i < gone.length; i += 200) await sb.from('oj_items').update({ active: false }).in('key', gone.slice(i, i + 200));
+      // objednávky, které už nejsou ve stavu „Potřeba objednat“, jen označit (zůstávají, dokud se nedoručí)
+      const keepOrders = new Set(ords.map((o: any) => o.code));
+      const { data: actO } = await sb.from('oj_orders').select('code').eq('active', true).eq('manual', false);
+      const goneO = (actO || []).map((r: { code: string }) => r.code).filter((c: string) => !keepOrders.has(c));
+      for (let i = 0; i < goneO.length; i += 200) await sb.from('oj_orders').update({ active: false, updated_at: now }).in('code', goneO.slice(i, i + 200));
       await sb.from('hub_settings').update({ data: { ...(cfg?.data || {}), ojLastSync: now } }).eq('id', 1);
       return json({ ok: true, orders: seenOrders.length, items: items.length, removed: gone.length, at: now });
     }

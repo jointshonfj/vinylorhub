@@ -873,3 +873,23 @@ label.row, label.trust, label.cm-done, label.si-chk, .vs-row > label .muted { te
 .problems { margin: 6px 0 10px; padding-left: 18px; line-height: 1.5; color: var(--ink-2); }
 .problems li { margin-bottom: 4px; }
 .modal select { width: 100%; }
+
+/* ---------- OrderJoi (Naskladnění → svozy) ---------- */
+.stats.oj-cards { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.stat.click { cursor: pointer; text-align: left; font: inherit; color: inherit; display: block; width: 100%; transition: transform .15s var(--ease), border-color .15s; }
+.stat.click:hover { transform: translateY(-2px); border-color: var(--c, var(--brand)); }
+.stat.click.on { border-color: var(--c, var(--brand)); box-shadow: 0 0 0 1px var(--c, var(--brand)); }
+.stat.click .k { font-size: 16px; text-transform: none; letter-spacing: 0; }
+.stat.click .v { font-size: 26px; color: var(--c, var(--ink)); }
+.oj-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--c, var(--line)); text-decoration: none; color: inherit; transition: background-color .12s; }
+.oj-row:last-child { border-bottom: 0; }
+.oj-row:hover { background: var(--hover); }
+.dashes { display: inline-flex; gap: 4px; }
+.dashes i { width: 22px; height: 4px; border-radius: 99px; background: var(--line-2); }
+.dashes i.on { background: var(--c, var(--brand)); }
+.dashes.issue i.on { background: var(--s-rejected); }
+.dashes.order i.on { background: var(--s-postponed); }
+.dashes.auf i.on, .dashes.transit i.on { background: var(--s-sent); }
+.dashes.delivered i.on { background: var(--s-confirmed); }
+@media (max-width: 900px) { .stats.oj-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } .dashes { display: none; } }
+@media (max-width: 520px) { .stats.oj-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
