@@ -288,6 +288,8 @@ async function route() {
   if ((m = h.match(/^#\/s\/([\w-]+)/))) return renderReceipt(m[1]);
   if (h === '#/sklad') return renderStock();
   if (h === '#/svozy') return renderOj();
+  if (h === '#/kontejnery') return renderCt();
+  if ((m = h.match(/^#\/k\/([\w-]+)/))) return renderContainer(m[1]);
   if ((m = h.match(/^#\/svoz\/([\w-]+)/))) return renderShipment(m[1]);
   if ((m = h.match(/^#\/oj\/(.+)$/))) return renderOjOrder(decodeURIComponent(m[1]));
   if (h === '#/navstevy') return renderVisits();
@@ -319,6 +321,7 @@ function shell(active, inner) {
       ${nav('#/sklad', 'stock', '📦', 'Naskladnění')}
       ${nav('#/navstevy', 'visits', '🚶', 'Návštěvnost')}
       ${nav('#/nastenka', 'boards', '🗂️', 'Nástěnka')}
+      ${hasApp('kontejnery') ? nav('#/kontejnery', 'ct', '🚢', 'Kontejnery') : '<a class="soon" href="#" title="Zatím jen pro vybrané uživatele"><span class="ico">🚢</span><span>Kontejnery</span><em>🔒</em></a>'}
       <div class="nav-h">Připravujeme</div>
       <a class="soon" href="#"><span class="ico">🚚</span><span>Objednávky</span><em>brzy</em></a>
       <div class="nav-h">Systém</div>
@@ -2526,6 +2529,136 @@ async function ojEditSupplier(id) {
     else { if (!v.name) return toast('Doplň název', true); check(id ? await sb.from('oj_suppliers').update(v).eq('id', id) : await sb.from('oj_suppliers').insert(v)); }
     await loadOj(); drawOj();
   } catch (e) { toast(e.message, true); }
+}
+
+// =====================================================================
+// KONTEJNERY — kontejnery na cestě, položky z e-shopu, vyhledávání „kdy k nám přijde …“
+// Přístup jen pro uživatele s právem „kontejnery“ (hub_profiles.apps); stejně to hlídá i databáze (RLS).
+// =====================================================================
+const CT = { list: [], items: [], q: '', filter: 'open' };
+const CT_ST = { planned: ['Plánováno', 'draft'], sailing: ['Na cestě', 'sent'], port: ['V přístavu', 'postponed'], delivered: ['Doručeno', 'confirmed'] };
+const hasApp = a => !!(S.me && Array.isArray(S.me.apps) && S.me.apps.includes(a));
+const normCt = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const normQ = s => fold(s).replace(/(\d)\s*(mm|m)\b/g, '$1$2').replace(/[^a-z0-9.,]+/g, ' ').trim();
+const daysTo = d => d ? Math.round((new Date(d + 'T12:00') - new Date(ymd(new Date()) + 'T12:00')) / 864e5) : null;
+const dayWords = n => n === null ? '' : n === 0 ? 'dnes' : n === 1 ? 'zítra' : n === -1 ? 'včera' : n > 0 ? `za ${n} ${n < 5 ? 'dny' : 'dní'}` : `před ${-n} ${-n < 5 ? 'dny' : 'dny'}`;
+const ctBadge = s => `<span class="st" data-s="${CT_ST[s][1]}">${CT_ST[s][0]}</span>`;
+const ctEta = c => c.status === 'delivered' ? (c.delivered_at || c.ata) : (c.ata || c.eta);
+function trackLinks(c) {
+  const out = [];
+  if (c.number) out.push(['🔎 Sledovat kontejner', `https://www.searates.com/container/tracking/?number=${encodeURIComponent(c.number)}`]);
+  if (c.imo) out.push(['🚢 Loď na mapě', `https://www.vesselfinder.com/vessels/details/${encodeURIComponent(c.imo)}`]);
+  return out.map(([l, u]) => `<a class="btn sm" href="${u}" target="_blank" rel="noopener noreferrer">${l}</a>`).join(' ');
+}
+async function loadCt() {
+  const [list, items] = await Promise.all([
+    fetchAll(() => sb.from('ct_containers').select('*').order('eta', { ascending: true, nullsFirst: false }).order('created_at')),
+    fetchAll(() => sb.from('ct_items').select('*').order('sort').order('created_at')),
+  ]);
+  CT.list = list; CT.items = items;
+}
+function ctLocked(label) {
+  shell('ct', `<div class="topbar"><h1>${label}</h1></div><div class="panel empty-big"><div class="ill">🔒</div><h3>Zatím jen pro vybrané uživatele</h3><p>Tuhle aplikaci teď vyvíjíme. Jakmile bude hotová, zpřístupníme ji.</p><button class="btn primary" onclick="location.hash='#/'">Zpět na nabídky</button></div>`);
+}
+async function renderCt() {
+  if (!hasApp('kontejnery')) return ctLocked('Kontejnery');
+  shell('ct', `<div class="topbar"><h1>Kontejnery</h1></div><div class="panel panel-b"><div class="sk" style="height:220px"></div></div>`);
+  try { await Promise.all([loadCt(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  $('#main').innerHTML = `<div class="topbar"><h1>Kontejnery</h1><div class="search grow" style="max-width:520px"><span class="ic">⌕</span><input id="ctq" placeholder="Hledat číslo kontejneru, B/L, dodavatele — nebo produkt: „Carrara click 6mm“…" value="${esc(CT.q)}"></div><button class="btn primary" id="ctNew">＋ Nový kontejner</button></div>
+  <div id="ctStats"></div><div class="chips" id="ctF" style="margin-bottom:12px"></div><div id="ctRes"></div><div id="ctList"></div>`;
+  $('#ctNew').onclick = async e => { const b = e.currentTarget; b.disabled = true; try { const r = check(await sb.from('ct_containers').insert({ created_by: S.me.id }).select('id').single()); location.hash = '#/k/' + r.id; } catch (er) { toast(er.message, true); b.disabled = false; } };
+  $('#ctq').oninput = e => { CT.q = e.target.value; drawCt(); };
+  drawCt();
+}
+function drawCt() {
+  const open = CT.list.filter(c => !c.archived && c.status !== 'delivered');
+  const next = open.filter(c => c.eta || c.ata).sort((a, b) => String(a.ata || a.eta).localeCompare(b.ata || b.eta))[0];
+  $('#ctStats').innerHTML = `<div class="stats">
+    <div class="panel stat" style="--c:var(--s-sent)"><div class="k">Na cestě</div><div class="v">${CT.list.filter(c => c.status === 'sailing' && !c.archived).length}</div><div class="s">kontejnerů na moři</div></div>
+    <div class="panel stat" style="--c:var(--s-postponed)"><div class="k">V přístavu</div><div class="v">${CT.list.filter(c => c.status === 'port' && !c.archived).length}</div><div class="s">čeká na vyzvednutí</div></div>
+    <div class="panel stat" style="--c:var(--brand)"><div class="k">Nejbližší příjezd</div><div class="v">${next ? dayWords(daysTo(next.ata || next.eta)) : '—'}</div><div class="s">${next ? esc(next.number || 'bez čísla') + ' · ' + czDate(next.ata || next.eta) : 'zadej ETA u kontejneru'}</div></div>
+    <div class="panel stat" style="--c:var(--s-confirmed)"><div class="k">Doručeno</div><div class="v">${CT.list.filter(c => c.status === 'delivered').length}</div><div class="s">celkem</div></div></div>`;
+  $('#ctF').innerHTML = [['open', 'Na cestě a v přístavu'], ['all', 'Všechny'], ['delivered', 'Doručené'], ['archive', 'Archiv']].map(([k, l]) => `<button class="chip ${CT.filter === k ? 'on' : ''}" data-f="${k}">${l}</button>`).join('');
+  $$('#ctF .chip').forEach(b => b.onclick = () => { CT.filter = b.dataset.f; drawCt(); });
+  const q = normQ(CT.q); const tokens = q.split(' ').filter(Boolean);
+  const itemsOf = id => CT.items.filter(i => i.container_id === id);
+  // vyhledávání produktu: jednak podle textu v položce, jednak podle kódu produktu nalezeného v e-shopu
+  const codes = new Set(tokens.length ? searchProducts(CT.q, true).map(p => p.code) : []);
+  const itemHit = i => tokens.length && (codes.has(i.code) || tokens.every(t => normQ(i.code + ' ' + i.name).includes(t)));
+  const cHit = c => !tokens.length || tokens.every(t => normQ([c.number, c.bl, c.booking, c.supplier, c.carrier, c.vessel, c.pol, c.pod, c.note].join(' ')).includes(t)) || itemsOf(c.id).some(itemHit);
+  const byFilter = c => CT.filter === 'archive' ? c.archived : c.archived ? false : CT.filter === 'open' ? c.status !== 'delivered' : CT.filter === 'delivered' ? c.status === 'delivered' : true;
+  const hits = tokens.length ? CT.items.filter(itemHit).map(i => ({ i, c: CT.list.find(c => c.id === i.container_id) })).filter(x => x.c && !x.c.archived) : [];
+  hits.sort((a, b) => (a.c.status === 'delivered') - (b.c.status === 'delivered') || String(ctEta(a.c) || '9').localeCompare(ctEta(b.c) || '9'));
+  $('#ctRes').innerHTML = hits.length ? `<div class="panel" style="margin-bottom:14px;overflow-x:auto"><div style="padding:12px 14px"><b>🔎 Kdy k nám přijde „${esc(CT.q)}“</b></div><table class="list"><thead><tr><th>Produkt</th><th class="r">Množství</th><th>Kontejner</th><th>Příjezd</th><th>Stav</th></tr></thead><tbody>
+    ${hits.map(({ i, c }) => { const d = daysTo(ctEta(c)); return `<tr class="click" data-c="${c.id}"><td><b>${esc(i.code)}</b><div class="small muted">${esc(i.name)}</div></td><td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td><td>${esc(c.number) || '—'}<div class="small muted">${esc(c.supplier)}</div></td><td class="nowrap"><b>${ctEta(c) ? czDate(ctEta(c)) : 'neznámé'}</b>${c.status !== 'delivered' && d !== null ? `<div class="small muted">${dayWords(d)}</div>` : ''}</td><td>${ctBadge(c.status)}</td></tr>`; }).join('')}</tbody></table></div>` : tokens.length ? `<p class="muted small" style="margin:0 0 12px">Produkt „${esc(CT.q)}“ v žádném kontejneru nevidím.</p>` : '';
+  const list = CT.list.filter(c => byFilter(c) && cHit(c));
+  $('#ctList').innerHTML = list.length ? `<div class="panel" style="overflow-x:auto"><table class="list"><thead><tr><th>Kontejner</th><th>Dodavatel / loď</th><th>Trasa</th><th>Příjezd (ETA)</th><th>Obsah</th><th>Stav</th></tr></thead><tbody>
+    ${list.map(c => { const its = itemsOf(c.id); const d = daysTo(ctEta(c)); const late = c.status !== 'delivered' && c.eta && !c.ata && d !== null && d < 0;
+      return `<tr class="click" data-c="${c.id}"><td class="nowrap"><b>${highlight(c.number || 'bez čísla', CT.q)}</b>${c.bl ? `<div class="small muted">B/L ${esc(c.bl)}</div>` : ''}</td>
+      <td>${esc(c.supplier) || '—'}<div class="small muted">${esc(c.vessel) || ''}${c.carrier ? ' · ' + esc(c.carrier) : ''}</div></td><td class="small">${esc(c.pol) || '?'} → ${esc(c.pod) || '?'}</td>
+      <td class="nowrap"><b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b>${c.ata ? ' <span class="tag blue">dorazil</span>' : ''}${c.status !== 'delivered' && d !== null ? `<div class="small ${late ? 'warn-t' : 'muted'}">${late ? 'po termínu · ' : ''}${dayWords(d)}</div>` : ''}</td>
+      <td class="small">${its.length ? its.slice(0, 3).map(i => esc(i.name || i.code)).join('<br>') + (its.length > 3 ? `<br><span class="muted">+ ${its.length - 3} dalších</span>` : '') : '<span class="muted">bez položek</span>'}</td><td>${ctBadge(c.status)}</td></tr>`; }).join('')}</tbody></table></div>`
+    : `<div class="panel empty-big"><div class="ill">🚢</div><h3>${CT.list.length ? 'Nic nenalezeno' : 'Zatím žádný kontejner'}</h3><p>${CT.list.length ? 'Zkus jiné hledání nebo filtr.' : 'Založ první kontejner — číslo, loď, datum příjezdu a položky z e-shopu.'}</p></div>`;
+  $$('tr.click', $('#main')).forEach(r => r.onclick = () => { location.hash = '#/k/' + r.dataset.c; });
+}
+
+async function renderContainer(id) {
+  if (!hasApp('kontejnery')) return ctLocked('Kontejner');
+  shell('ct', `<div class="topbar"><h1>Kontejner</h1></div><div class="panel panel-b"><div class="sk" style="height:260px"></div></div>`);
+  try { await Promise.all([loadCt(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  const cur = () => CT.list.find(c => c.id === id);
+  if (!cur()) { $('#main').innerHTML = `<div class="panel empty-big"><div class="ill">🤷</div><h3>Kontejner nenalezen</h3><button class="btn primary" onclick="location.hash='#/kontejnery'">Zpět</button></div>`; return; }
+  const patch = async f => { check(await sb.from('ct_containers').update({ ...f, updated_at: new Date().toISOString() }).eq('id', id)); Object.assign(cur(), f); };
+  const main = $('#main');
+  main.innerHTML = `<div class="topbar"><a class="btn" href="#/kontejnery">← Kontejnery</a><h1 id="cTitle" style="margin:0"></h1><span id="cBadge"></span><span class="grow"></span><button class="btn" id="cArch"></button><button class="btn danger" id="cDel">Smazat</button></div><div id="cBody"></div>`;
+  main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter');
+  const fld = (k, label, ph = '', type = 'text') => `<div><label>${label}</label><input data-k="${k}" type="${type}" value="${esc(cur()[k] ?? '')}" placeholder="${esc(ph)}"></div>`;
+  function head() { const c = cur(); $('#cTitle').textContent = c.number || 'Nový kontejner'; $('#cBadge').innerHTML = ctBadge(c.status); $('#cArch').textContent = c.archived ? 'Vrátit z archivu' : 'Archivovat'; }
+  function draw() {
+    const c = cur(); head(); const its = CT.items.filter(i => i.container_id === id); const d = daysTo(ctEta(c));
+    $('#cBody').innerHTML = `
+    <div class="panel panel-b" style="margin-bottom:14px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      ${[['planned', 'Plánováno'], ['sailing', 'Na cestě'], ['port', 'V přístavu'], ['delivered', 'Doručeno']].map(([k, l]) => `<button class="chip ${c.status === k ? 'on' : ''}" data-st="${k}">${l}</button>`).join('')}<span class="grow"></span>
+      ${c.status !== 'delivered' && d !== null ? `<b>Příjezd ${dayWords(d)}</b>` : ''}${trackLinks(c)}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+      ${fld('number', 'Číslo kontejneru', 'např. MSCU1234567')}${fld('bl', 'B/L (konosament)')}${fld('booking', 'Booking')}${fld('supplier', 'Dodavatel')}${fld('carrier', 'Přepravce (rejdař)', 'např. MSC')}
+      ${fld('vessel', 'Loď')}${fld('imo', 'IMO lodi', '7 číslic')}${fld('pol', 'Přístav nalodění')}${fld('pod', 'Přístav vyloďení', 'např. Hamburk')}
+      ${fld('etd', 'Odplutí (ETD)', '', 'date')}${fld('eta', 'Příjezd (ETA)', '', 'date')}${fld('ata', 'Skutečný příjezd', '', 'date')}${fld('delivered_at', 'Doručeno k nám', '', 'date')}</div>
+      <label style="margin-top:12px">Poznámka</label><input data-k="note" value="${esc(c.note)}"></div>
+    <h3 style="margin:0 0 8px">Obsah kontejneru</h3>
+    <div class="panel" style="overflow-x:auto;margin-bottom:12px"><table class="list"><thead><tr><th>Kód</th><th>Produkt</th><th class="r" style="width:130px">Množství</th><th style="width:90px">Jednotka</th><th></th></tr></thead><tbody>
+      ${its.map(i => `<tr data-i="${i.id}"><td class="nowrap"><b>${esc(i.code)}</b></td><td>${esc(i.name)}</td><td class="r"><input type="number" step="any" min="0" data-f="qty" value="${i.qty}" style="width:100px;text-align:right"></td><td><input data-f="unit" value="${esc(i.unit)}" style="width:70px"></td><td><button class="btn sm" data-rm="${i.id}">✕</button></td></tr>`).join('') || '<tr><td colspan="5" class="empty">Zatím bez položek — přidej je níže.</td></tr>'}</tbody></table></div>
+    <div class="panel panel-b"><label>＋ Přidat produkt z e-shopu (kód nebo název)</label><div style="position:relative"><input id="cAddQ" placeholder="např. Carrara click 6mm" autocomplete="off"><div id="cAddRes" class="results" hidden></div></div></div>`;
+    bind();
+  }
+  function bind() {
+    const b = $('#cBody');
+    $$('[data-st]', b).forEach(x => x.onclick = async () => { const st = x.dataset.st; try { await patch({ status: st, ...(st === 'delivered' && !cur().delivered_at ? { delivered_at: ymd(new Date()) } : {}) }); draw(); } catch (e) { toast(e.message, true); } });
+    $$('[data-k]', b).forEach(i => i.onchange = async () => {
+      const k = i.dataset.k; let v = i.value.trim(); if (k === 'number') v = normCt(v); if (['etd', 'eta', 'ata', 'delivered_at'].includes(k)) v = v || null;
+      try { await patch({ [k]: v }); if (k === 'number') i.value = v; if (['number', 'eta', 'ata', 'imo', 'delivered_at'].includes(k)) draw(); else head(); } catch (e) { toast(e.message, true); }
+    });
+    $$('[data-i] [data-f]', b).forEach(i => i.onchange = async () => {
+      const row = CT.items.find(x => x.id === i.closest('tr').dataset.i); const f = i.dataset.f; const v = f === 'qty' ? toNum(i.value) : i.value.trim();
+      try { check(await sb.from('ct_items').update({ [f]: v }).eq('id', row.id)); row[f] = v; } catch (e) { toast(e.message, true); }
+    });
+    $$('[data-rm]', b).forEach(x => x.onclick = async () => { try { check(await sb.from('ct_items').delete().eq('id', x.dataset.rm)); CT.items = CT.items.filter(i => i.id !== x.dataset.rm); draw(); } catch (e) { toast(e.message, true); } });
+    const q = $('#cAddQ'), res = $('#cAddRes');
+    q.oninput = () => {
+      const f = searchProducts(q.value, false).slice(0, 8);
+      res.hidden = !f.length;
+      res.innerHTML = f.length ? f.map((p, k) => `<div class="res" data-p="${k}" style="padding:8px 12px;cursor:pointer"><b>${esc(p.code)}</b> ${esc(p.name)}${p.variant ? ', ' + esc(p.variant) : ''}</div>`).join('') : '';
+      $$('[data-p]', res).forEach(r => r.onmousedown = async e => {
+        e.preventDefault(); const p = f[r.dataset.p]; const sort = CT.items.filter(i => i.container_id === id).length;
+        try { const row = check(await sb.from('ct_items').insert({ container_id: id, code: p.code, name: p.name + (p.variant ? ', ' + p.variant : ''), qty: 1, unit: 'ks', sort }).select().single()); CT.items.push(row); draw(); const n = $('#cAddQ'); n.focus(); }
+        catch (er) { toast(er.message, true); }
+      });
+    };
+    q.onblur = () => setTimeout(() => { res.innerHTML = ''; res.hidden = true; }, 150);
+  }
+  $('#cArch').onclick = async () => { try { await patch({ archived: !cur().archived }); toast(cur().archived ? 'Archivováno' : 'Vráceno z archivu'); head(); } catch (e) { toast(e.message, true); } };
+  $('#cDel').onclick = async () => { if (!(await confirmBox('Smazat kontejner?', 'Smaže se i jeho seznam položek.', { ok: 'Smazat', danger: true }))) return; try { check(await sb.from('ct_containers').delete().eq('id', id)); toast('Smazáno'); location.hash = '#/kontejnery'; } catch (e) { toast(e.message, true); } };
+  draw();
 }
 
 // =====================================================================

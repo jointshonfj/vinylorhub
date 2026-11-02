@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.11.2';
+export const APP_VERSION = '0.12.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-10-23';
 export const CHANGELOG = [
+  { v: '0.12.0', d: '2026-11-02', t: ['Nová aplikace Kontejnery (zatím jen pro Filipa, ostatní ji vidí zamčenou): čísla kontejnerů, loď, ETA, položky z e-shopu, hledání „kdy k nám přijde …“', 'Přístup k aplikacím po uživatelích (hlídá i databáze)'] },
   { v: '0.11.2', d: '2026-10-29', t: ['Naskladnění: doručené a naskladněné svozy z OrderJoi se zobrazují i v hlavním seznamu příjemek (označené „svoz“)'] },
   { v: '0.11.1', d: '2026-10-29', t: ['OrderJoi: upozornění na doručený svoz čekající na naskladnění a tlačítko „Naskladnit“ v seznamu svozů i v detailu objednávky'] },
   { v: '0.11.0', d: '2026-10-29', t: ['OrderJoi přepracován podle SmartJoi: objednávky → e-mail dodavateli s referencí → AUF (číslo a částka v EUR) → svoz → naskladnění', 'Stavové karty (Reklamace, Objednat, Čeká na AUF, Bez svozu, Na cestě, Doručeno), záložky AUFy · Svozy · Produkty · Dodavatelé', 'Svoz SV-2026-001 přenesen ze SmartJoi včetně všech AUF a produktových údajů'] },
