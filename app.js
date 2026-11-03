@@ -2535,7 +2535,43 @@ async function ojEditSupplier(id) {
 // KONTEJNERY — kontejnery na cestě, položky z e-shopu, vyhledávání „kdy k nám přijde …“
 // Přístup jen pro uživatele s právem „kontejnery“ (hub_profiles.apps); stejně to hlídá i databáze (RLS).
 // =====================================================================
-const CT = { list: [], items: [], inv: [], q: '', filter: 'open', fresh: null };
+function ctProgress(c) {
+  if (c.status === 'delivered' || c.status === 'port') return 1;
+  if (c.status === 'planned') return 0.02;
+  const a = c.etd && new Date(c.etd + 'T12:00'), b = (c.ata || c.eta) && new Date((c.ata || c.eta) + 'T12:00');
+  if (a && b && b > a) return Math.max(0.05, Math.min(0.95, (Date.now() - a) / (b - a)));
+  return 0.45;
+}
+function ctCountUp() {
+  if (CT.animated) return; CT.animated = true;
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  $$('.cnt').forEach(el => {
+    const to = Number(el.dataset.n) || 0; if (reduce || to < 2) return;
+    const t0 = performance.now(); const step = t => { const k = Math.min(1, (t - t0) / 700); el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step); };
+    el.textContent = '0'; requestAnimationFrame(step);
+  });
+}
+function ctSeaSvg() {
+  const stack = (x, y, cols) => cols.map((c, i) => `<rect x="${x + i * 17}" y="${y}" width="15" height="9" rx="1" fill="${c}"/><rect x="${x + i * 17}" y="${y}" width="15" height="2" fill="#fff" opacity=".22"/>`).join('');
+  const wave = (w, h) => { let d = `M0 ${h / 2}`; for (let x = 0; x < w; x += 80) d += ` q20 -${h / 2} 40 0 t40 0`; return d + ` V${h} H0 Z`; };
+  return `<div class="ct-sea"><div class="ct-sea-txt"></div>
+    <svg viewBox="0 0 1200 170" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+      <circle class="ct-sun" cx="980" cy="52" r="26"/>
+      <g class="ct-cloud c1"><ellipse cx="200" cy="38" rx="42" ry="10"/><ellipse cx="228" cy="32" rx="26" ry="9"/></g>
+      <g class="ct-cloud c2"><ellipse cx="620" cy="24" rx="36" ry="8"/><ellipse cx="644" cy="19" rx="22" ry="7"/></g>
+      <g class="ct-ship-run"><g class="ct-bob">
+        <g transform="translate(0,50) scale(1.4)">
+          ${stack(34, 8, ['#c4372a', '#2563eb', '#d08700', '#16804a', '#7c3aed', '#0e7490'])}${stack(34, 17, ['#2563eb', '#16804a', '#c4372a', '#d08700', '#0e7490', '#7c3aed'])}${stack(34, 26, ['#d08700', '#c4372a', '#7c3aed', '#2563eb', '#16804a', '#c4372a'])}
+          ${stack(51, -1, ['#16804a', '#d08700', '#2563eb', '#c4372a'])}
+          <rect x="148" y="-6" width="26" height="44" rx="2" fill="#e8ebe6"/><rect x="152" y="0" width="18" height="6" fill="#4b5563"/><rect x="152" y="10" width="18" height="4" fill="#4b5563"/><rect x="158" y="-16" width="6" height="12" fill="#c4372a"/>
+          <path d="M14 38 H184 L170 56 H30 Z" fill="#1f2937"/><path d="M14 38 H184 L182 42 H16 Z" fill="#c4372a"/>
+        </g></g></g>
+      <path class="ct-wave w3" d="${wave(2400, 40)}" transform="translate(0,130)"/>
+      <path class="ct-wave w2" d="${wave(2400, 34)}" transform="translate(0,142)"/>
+      <path class="ct-wave w1" d="${wave(2400, 30)}" transform="translate(0,152)"/>
+    </svg></div>`;
+}
+const CT = { list: [], items: [], inv: [], q: '', filter: 'open', fresh: null, view: ls.get('vh_ct_view') === 'table' ? 'table' : 'cards' };
 const CT_ST = { planned: ['Plánováno', 'draft'], sailing: ['Na cestě', 'sent'], port: ['V přístavu', 'postponed'], delivered: ['Doručeno', 'confirmed'] };
 const hasApp = a => !!(S.me && Array.isArray(S.me.apps) && S.me.apps.includes(a));
 const normCt = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -2563,10 +2599,11 @@ function ctLocked(label) {
 }
 async function renderCt() {
   if (!hasApp('kontejnery')) return ctLocked('Kontejnery');
+  CT.animated = false;
   shell('ct', `<div class="topbar"><h1>Kontejnery</h1></div><div class="panel panel-b"><div class="sk" style="height:220px"></div></div>`);
   try { await Promise.all([loadCt(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
   $('#main').innerHTML = `<div class="topbar"><h1>Kontejnery</h1><div class="search grow" style="max-width:520px"><span class="ic">⌕</span><input id="ctq" placeholder="Hledat kontejner, B/L, číslo faktury, dodavatele — nebo produkt: „Carrara click 6mm“…" value="${esc(CT.q)}"></div><button class="btn primary" id="ctNew">＋ Nový kontejner</button></div>
-  <div id="ctStats"></div><div class="chips" id="ctF" style="margin-bottom:12px"></div><div id="ctRes"></div><div id="ctList"></div>`;
+  <div id="ctHero"></div><div id="ctStats"></div><div class="chips" id="ctF" style="margin-bottom:12px"></div><div id="ctRes"></div><div id="ctList"></div>`;
   $('#ctNew').onclick = async e => { const b = e.currentTarget; b.disabled = true; try { const r = check(await sb.from('ct_containers').insert({ created_by: S.me.id }).select('id').single()); CT.fresh = r.id; location.hash = '#/k/' + r.id; } catch (er) { toast(er.message, true); b.disabled = false; } };
   $('#ctq').oninput = e => { CT.q = e.target.value; drawCt(); };
   drawCt();
@@ -2574,13 +2611,17 @@ async function renderCt() {
 function drawCt() {
   const open = CT.list.filter(c => !c.archived && c.status !== 'delivered');
   const next = open.filter(c => c.eta || c.ata).sort((a, b) => String(a.ata || a.eta).localeCompare(b.ata || b.eta))[0];
-  $('#ctStats').innerHTML = `<div class="stats">
-    <div class="panel stat" style="--c:var(--s-sent)"><div class="k">Na cestě</div><div class="v">${CT.list.filter(c => c.status === 'sailing' && !c.archived).length}</div><div class="s">kontejnerů na moři</div></div>
-    <div class="panel stat" style="--c:var(--s-postponed)"><div class="k">V přístavu</div><div class="v">${CT.list.filter(c => c.status === 'port' && !c.archived).length}</div><div class="s">čeká na vyzvednutí</div></div>
-    <div class="panel stat" style="--c:var(--brand)"><div class="k">Nejbližší příjezd</div><div class="v">${next ? dayWords(daysTo(next.ata || next.eta)) : '—'}</div><div class="s">${next ? esc(next.number || 'bez čísla') + ' · ' + czDate(next.ata || next.eta) : 'zadej ETA u kontejneru'}</div></div>
-    <div class="panel stat" style="--c:var(--s-confirmed)"><div class="k">Doručeno</div><div class="v">${CT.list.filter(c => c.status === 'delivered').length}</div><div class="s">celkem</div></div></div>`;
+  const nSail = CT.list.filter(c => c.status === 'sailing' && !c.archived).length, nPort = CT.list.filter(c => c.status === 'port' && !c.archived).length, nDone = CT.list.filter(c => c.status === 'delivered' && !c.archived).length;
+  const nextD = next ? daysTo(next.ata || next.eta) : null;
+  if (!$('#ctHero .ct-sea')) $('#ctHero').innerHTML = ctSeaSvg();
+  $('#ctHero .ct-sea-txt').innerHTML = `<div class="ct-sea-k">${nSail + nPort ? 'Právě na cestě' : 'Zatím klid na moři'}</div><div class="ct-sea-v"><span class="cnt" data-n="${nSail + nPort}">${nSail + nPort}</span> ${nSail + nPort === 1 ? 'kontejner' : nSail + nPort < 5 ? 'kontejnery' : 'kontejnerů'}</div><div class="ct-sea-s">${next ? `nejbližší <b>${esc(next.number || 'bez čísla')}</b> přistane ${dayWords(nextD)} · ${czDate(next.ata || next.eta)}` : 'zadej ETA u kontejneru a ukážu ti odpočet'}</div>`;
+  $('#ctStats').innerHTML = `<div class="stats ct-stats">
+    ${[['⚓', 'V přístavu', nPort, 'čeká na vyzvednutí', 'var(--s-postponed)'], ['🚢', 'Na cestě', nSail, 'kontejnerů na moři', 'var(--s-sent)'], ['🗓️', 'Nejbližší příjezd', null, next ? esc(next.number || 'bez čísla') + ' · ' + czDate(next.ata || next.eta) : 'zadej ETA u kontejneru', 'var(--brand)', next ? dayWords(nextD) : '—'], ['📦', 'Doručeno', nDone, 'celkem', 'var(--s-confirmed)']].map(([ic, k, v, sub, col, txt], n) => `<div class="panel stat ct-stat" style="--c:${col};--i:${n}"><span class="ct-ico">${ic}</span><div class="k">${k}</div><div class="v">${v === null ? txt : `<span class="cnt" data-n="${v}">${v}</span>`}</div><div class="s">${sub}</div></div>`).join('')}</div>`;
+  ctCountUp();
   $('#ctF').innerHTML = [['open', 'Na cestě a v přístavu'], ['all', 'Všechny'], ['delivered', 'Doručené'], ['archive', 'Archiv']].map(([k, l]) => `<button class="chip ${CT.filter === k ? 'on' : ''}" data-f="${k}">${l}</button>`).join('');
-  $$('#ctF .chip').forEach(b => b.onclick = () => { CT.filter = b.dataset.f; drawCt(); });
+  $('#ctF').innerHTML += `<span class="grow"></span><button class="chip ${CT.view === 'cards' ? 'on' : ''}" data-v="cards">▦ Karty</button><button class="chip ${CT.view === 'table' ? 'on' : ''}" data-v="table">☰ Tabulka</button>`;
+  $$('#ctF .chip[data-f]').forEach(b => b.onclick = () => { CT.filter = b.dataset.f; drawCt(); });
+  $$('#ctF .chip[data-v]').forEach(b => b.onclick = () => { CT.view = b.dataset.v; ls.set('vh_ct_view', CT.view); drawCt(); });
   const q = normQ(CT.q); const tokens = q.split(' ').filter(Boolean);
   const itemsOf = id => CT.items.filter(i => i.container_id === id);
   // vyhledávání produktu: jednak podle textu v položce, jednak podle kódu produktu nalezeného v e-shopu
@@ -2599,14 +2640,28 @@ function drawCt() {
   $('#ctRes').innerHTML = invPanel + (hits.length ? `<div class="panel" style="margin-bottom:14px;overflow-x:auto"><div style="padding:12px 14px"><b>🔎 Kdy k nám přijde „${esc(CT.q)}“</b></div><table class="list"><thead><tr><th>Produkt</th><th class="r">Množství</th><th>Kontejner</th><th>Příjezd</th><th>Stav</th></tr></thead><tbody>
     ${hits.map(({ i, c }) => { const d = daysTo(ctEta(c)); return `<tr class="click" data-c="${c.id}"><td><b>${esc(i.code)}</b><div class="small muted">${esc(i.name)}</div></td><td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td><td>${esc(c.number) || '—'}<div class="small muted">${esc(c.supplier)}</div></td><td class="nowrap"><b>${ctEta(c) ? czDate(ctEta(c)) : 'neznámé'}</b>${c.status !== 'delivered' && d !== null ? `<div class="small muted">${dayWords(d)}</div>` : ''}</td><td>${ctBadge(c.status)}</td></tr>`; }).join('')}</tbody></table></div>` : tokens.length && !invHits.length ? `<p class="muted small" style="margin:0 0 12px">Produkt „${esc(CT.q)}“ v žádném kontejneru nevidím.</p>` : '');
   const list = CT.list.filter(c => byFilter(c) && cHit(c));
-  $('#ctList').innerHTML = list.length ? `<div class="panel" style="overflow-x:auto"><table class="list"><thead><tr><th>Kontejner</th><th>Dodavatel / loď</th><th>Trasa</th><th>Příjezd (ETA)</th><th>Obsah</th><th>Faktury</th><th>Stav</th></tr></thead><tbody>
+  const cardsHtml = rows => `<div class="ct-cards">${rows.map((c, n) => {
+    const its = itemsOf(c.id); const invs = invsOf(c.id); const d = daysTo(ctEta(c)); const late = c.status !== 'delivered' && c.eta && !c.ata && d !== null && d < 0;
+    const pr = ctProgress(c); const col = { planned: 'var(--s-draft)', sailing: 'var(--s-sent)', port: 'var(--s-postponed)', delivered: 'var(--s-confirmed)' }[c.status];
+    return `<div class="ct-card" data-c="${c.id}" style="--c:${col};--i:${Math.min(n, 12)}" tabindex="0">
+      <div class="ct-card-top"><b class="ct-card-num">${highlight(c.number || 'bez čísla', CT.q)}</b>${ctBadge(c.status)}</div>
+      <div class="ct-card-body">
+        <div class="small muted">${esc(c.supplier) || 'dodavatel neuveden'}${c.carrier ? ' · ' + esc(c.carrier) : ''}${c.tracking && c.tracking.tr_id ? ' · 📡' : ''}</div>
+        <div class="ct-voy"><span class="ct-port">${esc(c.pol) || '?'}</span><div class="ct-track"><i style="width:${Math.round(pr * 100)}%"></i><span class="ct-ship" style="left:${Math.round(pr * 100)}%">${c.status === 'delivered' ? '✅' : c.status === 'port' ? '⚓' : '🚢'}</span></div><span class="ct-port r">${esc(c.pod) || '?'}</span></div>
+        <div class="ct-card-eta"><div><div class="small muted">${c.status === 'delivered' ? 'Doručeno' : c.ata ? 'Dorazil' : 'Příjezd'}</div><b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b></div>${c.status !== 'delivered' && d !== null ? `<span class="ct-count ${late ? 'late' : ''}">${late ? 'po termínu · ' : ''}${dayWords(d)}</span>` : ''}</div>
+        <div class="ct-chips">${its.slice(0, 3).map(i => `<span>${esc((i.name || i.code).slice(0, 26))}</span>`).join('')}${its.length > 3 ? `<span class="more">+${its.length - 3}</span>` : ''}${!its.length ? '<span class="more">bez položek</span>' : ''}</div>
+      </div>
+      <div class="ct-card-foot"><span>📦 ${its.length}</span><span>🧾 ${invs.length}${invs.some(v => v.file_path) ? ' 📄' : ''}</span>${c.stocked_at ? '<span class="tag blue">naskladněno</span>' : ''}</div></div>`;
+  }).join('')}</div>`;
+  const tableHtml = list.length ? `<div class="panel" style="overflow-x:auto"><table class="list"><thead><tr><th>Kontejner</th><th>Dodavatel / loď</th><th>Trasa</th><th>Příjezd (ETA)</th><th>Obsah</th><th>Faktury</th><th>Stav</th></tr></thead><tbody>
     ${list.map(c => { const its = itemsOf(c.id); const d = daysTo(ctEta(c)); const late = c.status !== 'delivered' && c.eta && !c.ata && d !== null && d < 0;
       return `<tr class="click" data-c="${c.id}"><td class="nowrap"><b>${highlight(c.number || 'bez čísla', CT.q)}</b>${c.bl ? `<div class="small muted">B/L ${esc(c.bl)}</div>` : ''}</td>
       <td>${esc(c.supplier) || '—'}<div class="small muted">${esc(c.vessel) || ''}${c.carrier ? ' · ' + esc(c.carrier) : ''}</div></td><td class="small">${esc(c.pol) || '?'} → ${esc(c.pod) || '?'}</td>
       <td class="nowrap"><b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b>${c.ata ? ' <span class="tag blue">dorazil</span>' : ''}${c.tracking && c.tracking.tr_id ? ' <span title="Sledováno v reálném čase">📡</span>' : ''}${c.status !== 'delivered' && d !== null ? `<div class="small ${late ? 'warn-t' : 'muted'}">${late ? 'po termínu · ' : ''}${dayWords(d)}</div>` : ''}</td>
       <td class="small">${its.length ? its.slice(0, 3).map(i => esc(i.name || i.code)).join('<br>') + (its.length > 3 ? `<br><span class="muted">+ ${its.length - 3} dalších</span>` : '') : '<span class="muted">bez položek</span>'}</td><td class="small">${invsOf(c.id).map(v => esc(v.number || 'faktura') + (v.file_path ? ' 📄' : '')).join('<br>') || '<span class="muted">—</span>'}</td><td>${ctBadge(c.status)}${c.stocked_at ? ' <span class="tag blue">naskladněno</span>' : ''}</td></tr>`; }).join('')}</tbody></table></div>`
     : `<div class="panel empty-big"><div class="ill">🚢</div><h3>${CT.list.length ? 'Nic nenalezeno' : 'Zatím žádný kontejner'}</h3><p>${CT.list.length ? 'Zkus jiné hledání nebo filtr.' : 'Založ první kontejner — číslo, loď, datum příjezdu a položky z e-shopu.'}</p></div>`;
-  $$('tr.click', $('#main')).forEach(r => r.onclick = () => { location.hash = '#/k/' + r.dataset.c; });
+  $('#ctList').innerHTML = list.length && CT.view === 'cards' ? cardsHtml(list) : tableHtml;
+  $$('tr.click, .ct-card', $('#main')).forEach(r => { r.onclick = () => { location.hash = '#/k/' + r.dataset.c; }; r.onkeydown = e => { if (e.key === 'Enter') location.hash = '#/k/' + r.dataset.c; }; });
 }
 
 async function ctCall(body) {

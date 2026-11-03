@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.15.0';
+export const APP_VERSION = '0.16.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.16.0', d: '2026-11-03', t: ['Kontejnery: nový přehled v přístavním stylu — animované moře s plující lodí plnou kontejnerů, stavové karty s počítadly, kontejnery jako karty s „plavbou“ (loď na trase podle ETD/ETA) a odpočtem, přepínač Karty / Tabulka'] },
   { v: '0.15.0', d: '2026-11-03', t: ['Kontejnery: sledování v reálném čase přes Terminal49 (stav, loď, ETA, události, poloha lodi a vzdálenost do přístavu), tlačítko „Spustit sledování“ a automatická obnova každé 3 hodiny'] },
   { v: '0.14.0', d: '2026-11-03', t: ['Kontejnery: přehlednější detail (průběh v krocích, souhrn, informace, obsah, faktury)', 'Tlačítko „Naskladnit“ v náhledu: příjem položek (dorazilo OK / méně / více / poškozeno / nedorazilo, poznámky, poznámka k doručení), výběr řádků, úprava množství a naskladnění celého kontejneru nebo jen jeho části ve 4 krocích'] },
   { v: '0.13.1', d: '2026-11-03', t: ['Kontejnery: možnost přidat produkt, který není v Shoptetu (eviduje se a hledá se, nenaskladňuje se)', 'Hledání produktů (i v nabídkách) bere i EAN, MPN, výrobce a další identifikátory z exportu Shoptetu'] },

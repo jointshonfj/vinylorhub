@@ -190,7 +190,12 @@ Deno.serve(async (req) => {
       if (!c) return json({ error: 'Kontejner nenalezen.' }, 404);
       if (b.scac) { const sc = String(b.scac).toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); if (sc.length >= 2) { c.scac = sc; await sb.from('ct_containers').update({ scac: sc }).eq('id', cid); } }
       const r = await trackOne(sb, key, c, !!b.force);
-      await audit('container_track', { container: c.number, ok: r.ok, pending: !!(r as any).pending });
+      // poslední chybu uložíme ke kontejneru (kvůli diagnostice), při úspěchu ji smažeme
+      const { data: fresh } = await sb.from('ct_containers').select('tracking').eq('id', cid).single();
+      const tr0 = fresh?.tracking && typeof fresh.tracking === 'object' ? { ...fresh.tracking } : {};
+      if (r.ok) delete tr0.last_error; else { tr0.last_error = (r as any).message || 'Neznámá chyba'; tr0.last_error_at = new Date().toISOString(); }
+      await sb.from('ct_containers').update({ tracking: tr0 }).eq('id', cid);
+      await audit('container_track', { container: c.number, ok: r.ok, pending: !!(r as any).pending, error: r.ok ? null : String((r as any).message || '').slice(0, 300) });
       return json(r);
     }
 
