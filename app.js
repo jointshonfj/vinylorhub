@@ -2603,7 +2603,7 @@ function drawCt() {
     ${list.map(c => { const its = itemsOf(c.id); const d = daysTo(ctEta(c)); const late = c.status !== 'delivered' && c.eta && !c.ata && d !== null && d < 0;
       return `<tr class="click" data-c="${c.id}"><td class="nowrap"><b>${highlight(c.number || 'bez čísla', CT.q)}</b>${c.bl ? `<div class="small muted">B/L ${esc(c.bl)}</div>` : ''}</td>
       <td>${esc(c.supplier) || '—'}<div class="small muted">${esc(c.vessel) || ''}${c.carrier ? ' · ' + esc(c.carrier) : ''}</div></td><td class="small">${esc(c.pol) || '?'} → ${esc(c.pod) || '?'}</td>
-      <td class="nowrap"><b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b>${c.ata ? ' <span class="tag blue">dorazil</span>' : ''}${c.status !== 'delivered' && d !== null ? `<div class="small ${late ? 'warn-t' : 'muted'}">${late ? 'po termínu · ' : ''}${dayWords(d)}</div>` : ''}</td>
+      <td class="nowrap"><b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b>${c.ata ? ' <span class="tag blue">dorazil</span>' : ''}${c.tracking && c.tracking.tr_id ? ' <span title="Sledováno v reálném čase">📡</span>' : ''}${c.status !== 'delivered' && d !== null ? `<div class="small ${late ? 'warn-t' : 'muted'}">${late ? 'po termínu · ' : ''}${dayWords(d)}</div>` : ''}</td>
       <td class="small">${its.length ? its.slice(0, 3).map(i => esc(i.name || i.code)).join('<br>') + (its.length > 3 ? `<br><span class="muted">+ ${its.length - 3} dalších</span>` : '') : '<span class="muted">bez položek</span>'}</td><td class="small">${invsOf(c.id).map(v => esc(v.number || 'faktura') + (v.file_path ? ' 📄' : '')).join('<br>') || '<span class="muted">—</span>'}</td><td>${ctBadge(c.status)}${c.stocked_at ? ' <span class="tag blue">naskladněno</span>' : ''}</td></tr>`; }).join('')}</tbody></table></div>`
     : `<div class="panel empty-big"><div class="ill">🚢</div><h3>${CT.list.length ? 'Nic nenalezeno' : 'Zatím žádný kontejner'}</h3><p>${CT.list.length ? 'Zkus jiné hledání nebo filtr.' : 'Založ první kontejner — číslo, loď, datum příjezdu a položky z e-shopu.'}</p></div>`;
   $$('tr.click', $('#main')).forEach(r => r.onclick = () => { location.hash = '#/k/' + r.dataset.c; });
@@ -2629,93 +2629,206 @@ async function ctOpenInvoice(inv) {
   } catch (e) { if (w) w.close(); toast('PDF se nepodařilo otevřít: ' + e.message, true); }
 }
 
+const CT_PORTS = [['hamburg', 53.54, 9.97], ['bremerhaven', 53.55, 8.55], ['bremen', 53.55, 8.55], ['wilhelmshaven', 53.52, 8.13], ['rotterdam', 51.95, 4.14], ['antwerp', 51.27, 4.35], ['antverpy', 51.27, 4.35], ['gdansk', 54.40, 18.67], ['gdynia', 54.53, 18.54], ['koper', 45.55, 13.73], ['trieste', 45.65, 13.76], ['rijeka', 45.32, 14.43], ['genoa', 44.41, 8.92], ['la spezia', 44.10, 9.83], ['le havre', 49.48, 0.11], ['felixstowe', 51.95, 1.32], ['barcelona', 41.35, 2.17], ['valencia', 39.44, -0.32], ['constanta', 44.17, 28.65], ['piraeus', 37.94, 23.63]];
+const ctPort = name => { const n = fold(name || ''); const p = CT_PORTS.find(x => n.includes(x[0])); return p ? { lat: p[1], lon: p[2] } : null; };
+const kmBetween = (a, b, c, d) => { const r = x => x * Math.PI / 180; const h = Math.sin(r(c - a) / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(r(d - b) / 2) ** 2; return Math.round(12742 * Math.asin(Math.sqrt(h))); };
+const CT_TSTATE = { new: 'nový', on_ship: 'na lodi', available: 'k vyzvednutí v terminálu', not_available: 'v terminálu, zatím nedostupný', grounded: 'uložený v terminálu', on_rail: 'na vlaku', picked_up: 'vyzvednutý', off_dock: 'mimo terminál', delivered: 'doručený', loaded: 'naložený', empty_returned: 'vrácený prázdný', awaiting_inland_transfer: 'čeká na přepravu dál' };
+const CT_STEPS = [['planned', 'Plánováno'], ['sailing', 'Na cestě'], ['port', 'V přístavu'], ['delivered', 'Doručeno'], ['stocked', 'Naskladněno']];
+const CT_RECV = { ok: ['OK', 'confirmed'], short: ['Méně', 'postponed'], more: ['Více', 'sent'], damaged: ['Poškozeno', 'rejected'], missing: ['Nedorazilo', 'rejected'] };
+const recvBadge = s => CT_RECV[s] ? `<span class="st" data-s="${CT_RECV[s][1]}">${CT_RECV[s][0]}</span>` : '<span class="muted small">—</span>';
+
 async function renderContainer(id) {
   if (!hasApp('kontejnery')) return ctLocked('Kontejner');
   shell('ct', `<div class="topbar"><h1>Kontejner</h1></div><div class="panel panel-b"><div class="sk" style="height:260px"></div></div>`);
   try { await Promise.all([loadCt(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
   const cur = () => CT.list.find(c => c.id === id);
   if (!cur()) { $('#main').innerHTML = `<div class="panel empty-big"><div class="ill">🤷</div><h3>Kontejner nenalezen</h3><button class="btn primary" onclick="location.hash='#/kontejnery'">Zpět</button></div>`; return; }
-  let edit = CT.fresh === id; CT.fresh = null;           // nový kontejner se otevře rovnou k vyplnění, jinak je jen náhled
+  let mode = CT.fresh === id ? 'edit' : 'view'; CT.fresh = null;     // view = jen náhled · edit = úpravy · recv = příjem a naskladnění
+  const sel = new Set();                                              // vybrané řádky k naskladnění
   const patch = async f => { check(await sb.from('ct_containers').update({ ...f, updated_at: new Date().toISOString() }).eq('id', id)); Object.assign(cur(), f); };
   const main = $('#main');
-  main.innerHTML = `<div class="topbar"><a class="btn" href="#/kontejnery">← Kontejnery</a><h1 id="cTitle" style="margin:0"></h1><span id="cBadge"></span><span class="grow"></span><span id="cBar" class="row"></span></div><div id="cBody"></div>`;
+  main.innerHTML = `<div class="topbar"><a class="btn" href="#/kontejnery">← Kontejnery</a><span class="grow"></span><span id="cBar" class="row"></span></div><div id="cBody"></div>`;
   main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter');
   const stocked = () => !!cur().stocked_at;
   const itemsOf = () => CT.items.filter(i => i.container_id === id);
   const invsOf = () => CT.inv.filter(i => i.container_id === id);
+  const lockedItem = i => i.stocked || stocked();
   const fld = (k, label, ph = '', type = 'text') => `<div><label>${label}</label><input data-k="${k}" type="${type}" value="${esc(cur()[k] ?? '')}" placeholder="${esc(ph)}"></div>`;
-  const kv = (label, v) => v ? `<div class="ct-kv"><div class="small muted">${label}</div><div><b>${v}</b></div></div>` : '';
-  function head() {
-    const c = cur(); $('#cTitle').textContent = c.number || 'Nový kontejner'; $('#cBadge').innerHTML = ctBadge(c.status) + (stocked() ? ' <span class="tag blue">naskladněno</span>' : '');
-    $('#cBar').innerHTML = edit
+  const kv = (label, v) => v ? `<div class="ct-kv"><span>${label}</span><b>${v}</b></div>` : '';
+  const amt = i => toNum(i.got ?? i.qty);
+  const unitSum = its => { const m = {}; for (const i of its) m[i.unit || 'ks'] = (m[i.unit || 'ks'] || 0) + toNum(i.qty); return Object.entries(m).map(([u, n]) => fmtQ(n) + ' ' + u).join(' · '); };
+
+  function bar() {
+    const c = cur();
+    $('#cBar').innerHTML = mode === 'edit'
       ? `<button class="btn" id="cArch">${c.archived ? 'Vrátit z archivu' : 'Archivovat'}</button><button class="btn danger" id="cDel">Smazat</button><button class="btn primary" id="cDone">✓ Hotovo</button>`
-      : `<button class="btn primary" id="cEdit">✏️ Upravit</button>`;
-    const e = $('#cEdit'); if (e) e.onclick = () => { edit = true; head(); draw(); };
-    const dn = $('#cDone'); if (dn) dn.onclick = () => { edit = false; head(); draw(); };
-    const ar = $('#cArch'); if (ar) ar.onclick = async () => { try { await patch({ archived: !cur().archived }); toast(cur().archived ? 'Archivováno' : 'Vráceno z archivu'); head(); } catch (e) { toast(e.message, true); } };
-    const dl = $('#cDel'); if (dl) dl.onclick = async () => {
+      : mode === 'recv'
+        ? `<button class="btn" id="cBack">← Zpět na náhled</button>`
+        : `<button class="btn" id="cEdit">✏️ Upravit</button><button class="btn primary" id="cRecv">📥 Naskladnit</button>`;
+    const on = (sel2, fn) => { const e = $(sel2); if (e) e.onclick = fn; };
+    on('#cEdit', () => { mode = 'edit'; draw(); });
+    on('#cDone', () => { mode = 'view'; draw(); });
+    on('#cBack', () => { mode = 'view'; draw(); });
+    on('#cRecv', () => { mode = 'recv'; sel.clear(); itemsOf().filter(i => !lockedItem(i) && !i.custom && i.recv_state && i.recv_state !== 'missing').forEach(i => sel.add(i.id)); draw(); });
+    on('#cArch', async () => { try { await patch({ archived: !cur().archived }); toast(cur().archived ? 'Archivováno' : 'Vráceno z archivu'); bar(); } catch (e) { toast(e.message, true); } });
+    on('#cDel', async () => {
       if (stocked() || itemsOf().some(i => i.stocked)) return toast('Kontejner, který je (částečně) naskladněný, smazat nejde. Můžeš ho archivovat.', true);
       if (!(await confirmBox('Smazat kontejner?', 'Smaže se i jeho seznam položek a přiložené faktury.', { ok: 'Smazat', danger: true }))) return;
       try { const paths = invsOf().map(i => i.file_path).filter(Boolean); if (paths.length) await sb.storage.from('ct-invoices').remove(paths); check(await sb.from('ct_containers').delete().eq('id', id)); toast('Smazáno'); location.hash = '#/kontejnery'; } catch (e) { toast(e.message, true); }
-    };
+    });
   }
-  function draw() {
-    const c = cur(); head(); const its = itemsOf(); const invs = invsOf(); const d = daysTo(ctEta(c));
-    const open = its.filter(i => !i.stocked && !i.skip && !i.custom);
-    const top = edit
-      ? `<div class="panel panel-b" style="margin-bottom:14px"><div class="small" style="margin-bottom:10px">✏️ <b>Režim úprav</b> — změny se ukládají hned. Až budeš hotový, klikni na „Hotovo“.</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">${[['planned', 'Plánováno'], ['sailing', 'Na cestě'], ['port', 'V přístavu'], ['delivered', 'Doručeno']].map(([k, l]) => `<button class="chip ${c.status === k ? 'on' : ''}" data-st="${k}">${l}</button>`).join('')}<span class="grow"></span>${trackLinks(c)}</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
-        ${fld('number', 'Číslo kontejneru', 'např. MSCU1234567')}${fld('bl', 'B/L (konosament)')}${fld('booking', 'Booking')}${fld('supplier', 'Dodavatel')}${fld('carrier', 'Přepravce (rejdař)', 'např. MSC')}
-        ${fld('vessel', 'Loď')}${fld('imo', 'IMO lodi', '7 číslic')}${fld('pol', 'Přístav nalodění')}${fld('pod', 'Přístav vyloďení', 'např. Hamburk')}
-        ${fld('etd', 'Odplutí (ETD)', '', 'date')}${fld('eta', 'Příjezd (ETA)', '', 'date')}${fld('ata', 'Skutečný příjezd', '', 'date')}${fld('delivered_at', 'Doručeno k nám', '', 'date')}</div>
-        <label style="margin-top:12px">Poznámka</label><input data-k="note" value="${esc(c.note)}"></div>`
-      : `<div class="panel panel-b" style="margin-bottom:14px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:${c.status !== 'delivered' && d !== null ? 10 : 0}px">${c.status !== 'delivered' && d !== null ? `<b style="font-size:1.1em">Příjezd ${dayWords(d)}</b>` : ''}<span class="grow"></span>${trackLinks(c)}</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px">
-        ${kv('Dodavatel', esc(c.supplier))}${kv('B/L', esc(c.bl))}${kv('Booking', esc(c.booking))}${kv('Přepravce', esc(c.carrier))}${kv('Loď', esc(c.vessel) + (c.imo ? ` <span class="muted small">IMO ${esc(c.imo)}</span>` : ''))}
-        ${kv('Trasa', c.pol || c.pod ? esc(c.pol || '?') + ' → ' + esc(c.pod || '?') : '')}${kv('Odplutí (ETD)', c.etd ? czDate(c.etd) : '')}${kv('Příjezd (ETA)', c.eta ? czDate(c.eta) : '')}${kv('Skutečný příjezd', c.ata ? czDate(c.ata) : '')}${kv('Doručeno k nám', c.delivered_at ? czDate(c.delivered_at) : '')}
-        ${kv('Naskladněno', c.stocked_at ? czDate(String(c.stocked_at).slice(0, 10)) : '')}</div>
-        ${c.note ? `<div class="small" style="margin-top:12px"><span class="muted">Poznámka:</span> ${esc(c.note)}</div>` : ''}</div>`;
-    const banner = !edit && c.status === 'delivered' && !stocked() && open.length ? `<div class="oj-banner" style="margin-bottom:14px"><span>📥 Kontejner je doručený a čeká na naskladnění do Shoptetu (${open.length} ${open.length === 1 ? 'položka' : open.length < 5 ? 'položky' : 'položek'}).</span><span class="grow"></span><button class="btn primary" id="cStock">📥 Naskladnit do Shoptetu…</button></div>` : '';
-    const locked = i => i.stocked || stocked();
-    const itemRow = i => edit
-      ? `<tr data-i="${i.id}"><td class="nowrap">${i.custom && !locked(i) ? `<input data-f="code" value="${esc(i.code)}" placeholder="kód" style="width:110px">` : `<b>${esc(i.code)}</b>`}</td><td>${i.custom && !locked(i) ? `<input data-f="name" value="${esc(i.name)}" placeholder="název"><input data-f="note" value="${esc(i.note)}" placeholder="EAN, MPN, poznámka…" style="margin-top:4px">` : esc(i.name)}${i.custom && locked(i) && i.note ? `<div class="small muted">${esc(i.note)}</div>` : ''}</td>
-        <td class="r"><input type="number" step="any" min="0" data-f="qty" value="${i.qty}" style="width:100px;text-align:right" ${locked(i) ? 'disabled' : ''}></td>
-        <td class="r"><input type="number" step="any" min="0" data-f="got" value="${i.got ?? ''}" placeholder="${fmtQ(i.qty)}" style="width:100px;text-align:right" ${locked(i) ? 'disabled' : ''}></td>
-        <td><input data-f="unit" value="${esc(i.unit)}" style="width:70px" ${locked(i) ? 'disabled' : ''}></td>
-        <td class="small nowrap">${i.stocked ? '<span class="tag blue">naskladněno</span>' : `${i.custom ? '<span class="tag">mimo Shoptet</span><br>' : ''}<label><input type="checkbox" data-f="skip" ${i.skip ? 'checked' : ''}> nenaskladňovat</label>${i.custom ? '<br><label><input type="checkbox" data-f="custom" checked> není v Shoptetu</label>' : ''}`}</td>
-        <td>${locked(i) ? '' : `<button class="btn sm" data-rm="${i.id}">✕</button>`}</td></tr>`
-      : `<tr><td class="nowrap"><b>${esc(i.code) || '—'}</b></td><td>${esc(i.name)}${i.custom ? ' <span class="tag">mimo Shoptet</span>' : ''}${i.note ? `<div class="small muted">${esc(i.note)}</div>` : ''}${!i.custom && (i.ean || i.mpn) ? `<div class="small muted">${[i.ean && 'EAN ' + esc(i.ean), i.mpn && 'MPN ' + esc(i.mpn)].filter(Boolean).join(' · ')}</div>` : ''}</td><td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td>
-        <td class="r nowrap">${i.got == null ? '<span class="muted">—</span>' : `<b ${toNum(i.got) !== toNum(i.qty) ? 'class="warn-t"' : ''}>${fmtQ(i.got)} ${esc(i.unit)}</b>`}</td><td class="small">${i.stocked ? '<span class="tag blue">naskladněno</span>' : i.custom ? '<span class="muted">mimo Shoptet</span>' : i.skip ? '<span class="muted">nenaskladňovat</span>' : ''}</td></tr>`;
-    const invHtml = `<h3 style="margin:18px 0 8px">Faktury <span class="muted small">${invs.length ? '(' + invs.length + ')' : ''}</span></h3>
-      <div class="panel" style="overflow-x:auto;margin-bottom:12px"><table class="list"><thead><tr><th>Číslo faktury</th><th>Dodavatel</th><th class="r">Částka</th><th>Datum</th><th>PDF</th>${edit ? '<th></th>' : ''}</tr></thead><tbody>
-      ${invs.map(v => edit
-        ? `<tr data-v="${v.id}"><td><input data-vf="number" value="${esc(v.number)}" style="width:150px"></td><td><input data-vf="supplier" value="${esc(v.supplier)}"></td><td class="r nowrap"><input type="number" step="any" data-vf="amount" value="${v.amount ?? ''}" style="width:100px;text-align:right"> <select data-vf="currency">${CT_CUR.map(x => `<option ${x === v.currency ? 'selected' : ''}>${x}</option>`).join('')}</select></td><td><input type="date" data-vf="issued_at" value="${v.issued_at || ''}"></td>
+
+  // ---------- hlavička: číslo, průběh, příjezd ----------
+  function hero() {
+    const c = cur(); const d = daysTo(ctEta(c)); const idx = stocked() ? 4 : Math.max(0, CT_STEPS.findIndex(x => x[0] === c.status));
+    const steps = CT_STEPS.map(([k, l], n) => {
+      const cls = n < idx ? 'done' : n === idx ? 'now' : '';
+      const clickable = mode === 'edit' && k !== 'stocked';
+      return `<${clickable ? 'button' : 'div'} class="ct-st ${cls}" ${clickable ? `data-st="${k}"` : ''}><i>${n < idx ? '✓' : n + 1}</i><span>${l}</span></${clickable ? 'button' : 'div'}>`;
+    }).join('<u></u>');
+    const late = c.status !== 'delivered' && c.eta && !c.ata && d !== null && d < 0;
+    return `<div class="panel ct-hero"><div class="ct-hero-top"><div><div class="ct-num">${esc(c.number) || 'Nový kontejner'}</div><div class="muted">${esc(c.supplier) || 'dodavatel neuveden'}${c.carrier ? ' · ' + esc(c.carrier) : ''}${c.archived ? ' · <b>archivováno</b>' : ''}</div></div>
+      <div class="ct-eta"><span class="muted small">${c.status === 'delivered' ? 'Doručeno' : c.ata ? 'Dorazil do přístavu' : 'Příjezd (ETA)'}</span><b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b>${c.status !== 'delivered' && d !== null ? `<span class="${late ? 'warn-t' : 'muted'} small">${late ? 'po termínu · ' : ''}${dayWords(d)}</span>` : ''}</div></div>
+      <div class="ct-steps">${steps}</div></div>`;
+  }
+
+  // ---------- sledování (Terminal49) ----------
+  function trackPanel() {
+    const c = cur(); const t = c.tracking || {}; const on = !!t.tr_id;
+    if (!on) return c.status === 'delivered' ? '' : `<div class="panel panel-b ct-sec ct-track"><div style="flex:1;min-width:220px"><b>📡 Sledování v reálném čase</b><div class="small muted">Napojení na Terminal49: stav, loď, ETA a (s doplňkovou licencí) poloha lodi. Po zapnutí se obnovuje samo zhruba každé 3 hodiny.</div></div><button class="btn primary" id="tkStart">Spustit sledování</button></div>`;
+    const pos = t.position; const port = ctPort(c.pod);
+    const km = pos && port ? kmBetween(pos.lat, pos.lon, port.lat, port.lon) : null;
+    const ev = (t.events || []).slice(0, 8);
+    return `<div class="panel ct-sec"><div class="panel-h">📡 Sledování <span class="sub">Terminal49${c.tracked_at ? ' · aktualizováno ' + czDateTime(c.tracked_at) : ''}</span><span class="grow"></span><button class="btn sm" id="tkRefresh">↻ Obnovit teď</button></div>
+      <div class="panel-b" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
+        <div class="ct-kv"><span>Stav u Terminal49</span><b>${t.status && t.status !== 'created' ? (t.status === 'failed' ? 'sledování selhalo: ' + esc(t.failed_reason || '') : 'čekáme na data od rejdaře') : esc(CT_TSTATE[t.state] || t.state || 'sledováno')}</b></div>
+        ${t.terminal ? `<div class="ct-kv"><span>Terminál</span><b>${esc(t.terminal)}</b></div>` : ''}
+        ${pos ? `<div class="ct-kv"><span>Poloha lodi${pos.at ? ' (' + czDateTime(pos.at) + ')' : ''}</span><b>${pos.lat.toFixed(2)}°, ${pos.lon.toFixed(2)}° <a href="https://www.openstreetmap.org/?mlat=${pos.lat}&mlon=${pos.lon}#map=5/${pos.lat}/${pos.lon}" target="_blank" rel="noopener noreferrer">mapa</a></b>${pos.speed != null ? `<small class="muted">rychlost ${esc(pos.speed)} uzlů</small>` : ''}</div>
+          ${km != null ? `<div class="ct-kv"><span>Do ${esc(c.pod)}</span><b>asi ${km.toLocaleString('cs')} km</b><small class="muted">vzdušnou čarou</small></div>` : ''}`
+          : t.routing === false ? `<div class="small muted" style="grid-column:1/-1">Poloha lodi na mapě vyžaduje u Terminal49 doplňkovou licenci (Routing Data). Stav, loď a datum příjezdu se sledují i bez ní.</div>` : ''}
+      </div>
+      ${ev.length ? `<div style="padding:0 16px 14px"><div class="small muted" style="margin-bottom:6px">Poslední události</div>${ev.map(e => `<div class="ct-ev"><span class="muted small nowrap">${e.at ? czDateTime(e.at) : ''}</span><span>${esc(String(e.e).replace(/^container\.transport\./, '').replace(/_/g, ' '))}${e.loc ? ' · ' + esc(e.loc) : ''}${e.vessel ? ' · ' + esc(e.vessel) : ''}</span></div>`).join('')}</div>` : ''}</div>`;
+  }
+  async function trackNow(btn, extra = {}) {
+    const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Načítám…';
+    try {
+      const r = await ctCall({ action: 'ct_track', containerId: id, force: !!extra.force, scac: extra.scac });
+      if (r.needScac) {
+        btn.disabled = false; btn.innerHTML = old;
+        const v = await modal({ title: 'Který je to rejdař?', focus: '[data-sc]',
+          body: `<p class="small">Terminal49 si není jistý rejdařem. Vyber ho, nebo napiš jeho SCAC kód (MSC = MSCU, Maersk = MAEU, CMA CGM = CMDU, Hapag-Lloyd = HLCU, ONE = ONEY, Evergreen = EGLV).</p>${r.candidates.length ? `<label>Návrhy</label><select data-pick><option value="">— vyber —</option>${r.candidates.map(x => `<option value="${esc(x.scac)}">${esc(x.name)} (${esc(x.scac)})</option>`).join('')}</select>` : ''}<label>SCAC kód</label><input data-sc maxlength="4" style="text-transform:uppercase">`,
+          actions: [{ label: 'Zrušit', value: null }, { label: 'Pokračovat', cls: 'primary', value: bd => ($('[data-sc]', bd).value.trim() || ($('[data-pick]', bd) ? $('[data-pick]', bd).value : '')) }] });
+        if (v) return trackNow(btn, { ...extra, scac: v });
+        return;
+      }
+      if (!r.ok) toast(r.message || 'Sledování se nepovedlo', true);
+      else toast(r.pending ? r.message : 'Sledování aktualizováno');
+      await loadCt(); draw();
+    } catch (e) {
+      if (/TERMINAL49_API_KEY/.test(e.message)) await modal({ title: 'Sledování ještě není zapnuté', body: '<p>V Supabase chybí tajný klíč <b>TERMINAL49_API_KEY</b>. Přidej ho v Supabase → Edge Functions → Secrets (návod ti poslal Claude v chatu) a zkus to znovu.</p>', actions: [{ label: 'Rozumím', value: null, cls: 'primary' }] });
+      else toast(e.message, true);
+      btn.disabled = false; btn.innerHTML = old;
+    }
+  }
+
+  // ---------- náhled ----------
+  function viewBody() {
+    const c = cur(); const its = itemsOf(); const invs = invsOf();
+    const open = its.filter(i => !lockedItem(i) && !i.custom);
+    const factsOnly = [kv('B/L', esc(c.bl)), kv('Booking', esc(c.booking)), kv('Loď', esc(c.vessel) + (c.imo ? ` <small class="muted">IMO ${esc(c.imo)}</small>` : '')), kv('Trasa', c.pol || c.pod ? esc(c.pol || '?') + ' → ' + esc(c.pod || '?') : ''),
+      kv('Odplutí (ETD)', c.etd ? czDate(c.etd) : ''), kv('Skutečný příjezd', c.ata ? czDate(c.ata) : ''), kv('Doručeno k nám', c.delivered_at ? czDate(c.delivered_at) : ''), kv('Naskladněno', c.stocked_at ? czDate(String(c.stocked_at).slice(0, 10)) : '')].join('');
+    return `${hero()}
+    ${c.status === 'delivered' && !stocked() && open.length ? `<div class="oj-banner"><span>📥 Kontejner je doručený. Zkontroluj, co dorazilo, a naskladni ho do Shoptetu (zbývá ${open.length} ${open.length === 1 ? 'řádek' : open.length < 5 ? 'řádky' : 'řádků'}).</span><span class="grow"></span><button class="btn primary" id="cRecv2">📥 Naskladnit</button></div>` : ''}
+    <div class="ct-grid">
+      <div class="panel panel-b ct-facts"><h4>Informace</h4>${factsOnly || '<span class="muted small">Zatím bez údajů — doplň je v úpravách.</span>'}${c.note ? `<div class="ct-note"><span class="muted small">Poznámka</span><div>${esc(c.note)}</div></div>` : ''}${c.delivery_note ? `<div class="ct-note"><span class="muted small">Poznámka k doručení</span><div>${esc(c.delivery_note)}</div></div>` : ''}<div style="margin-top:12px">${trackLinks(c)}</div></div>
+      <div class="panel panel-b ct-sum"><h4>Souhrn</h4><div class="ct-big">${its.length}<small> ${its.length === 1 ? 'položka' : its.length < 5 ? 'položky' : 'položek'}</small></div><div class="muted small">${unitSum(its) || '—'}</div>
+        <div class="ct-big" style="margin-top:12px">${invs.length}<small> ${invs.length === 1 ? 'faktura' : invs.length < 5 ? 'faktury' : 'faktur'}</small></div><div class="muted small">${invs.filter(v => v.file_path).length} s PDF</div>
+        <div class="ct-big" style="margin-top:12px">${its.filter(i => i.stocked).length}<small> / ${its.filter(i => !i.custom).length} naskladněno</small></div></div>
+    </div>
+    ${trackPanel()}
+    <div class="panel ct-sec"><div class="panel-h">Obsah kontejneru</div><div style="overflow-x:auto"><table class="list"><thead><tr><th>Kód</th><th>Produkt</th><th class="r">Objednáno</th><th class="r">Dorazilo</th><th>Příjem</th><th></th></tr></thead><tbody>
+      ${its.map(i => `<tr><td class="nowrap"><b>${esc(i.code) || '—'}</b></td><td>${esc(i.name)}${i.custom ? ' <span class="tag">mimo Shoptet</span>' : ''}${i.note ? `<div class="small muted">${esc(i.note)}</div>` : ''}${!i.custom && (i.ean || i.mpn) ? `<div class="small muted">${[i.ean && 'EAN ' + esc(i.ean), i.mpn && 'MPN ' + esc(i.mpn)].filter(Boolean).join(' · ')}</div>` : ''}${i.recv_note ? `<div class="small warn-t">↳ ${esc(i.recv_note)}</div>` : ''}</td>
+        <td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td><td class="r nowrap">${i.got == null ? '<span class="muted">—</span>' : `<b ${toNum(i.got) !== toNum(i.qty) ? 'class="warn-t"' : ''}>${fmtQ(i.got)} ${esc(i.unit)}</b>`}</td><td>${recvBadge(i.recv_state)}</td>
+        <td class="small">${i.stocked ? '<span class="tag blue">naskladněno</span>' : i.custom ? '<span class="muted">nenaskladňuje se</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Zatím bez položek — přidej je v úpravách.</td></tr>'}</tbody></table></div></div>
+    ${invoicesPanel(false)}`;
+  }
+
+  function invoicesPanel(editing) {
+    const invs = invsOf();
+    return `<div class="panel ct-sec"><div class="panel-h">Faktury <span class="sub">${invs.length ? invs.length : ''}</span><span class="grow"></span>${editing ? '<button class="btn sm" id="cInvAdd">＋ Přidat fakturu (PDF)</button>' : ''}</div><div style="overflow-x:auto"><table class="list"><thead><tr><th>Číslo faktury</th><th>Dodavatel</th><th class="r">Částka</th><th>Datum</th><th>PDF</th>${editing ? '<th></th>' : ''}</tr></thead><tbody>
+      ${invs.map(v => editing
+        ? `<tr data-v="${v.id}"><td><input data-vf="number" value="${esc(v.number)}" style="width:150px"></td><td><input data-vf="supplier" value="${esc(v.supplier)}"></td><td class="r nowrap"><input type="number" step="any" data-vf="amount" value="${v.amount ?? ''}" style="width:100px;text-align:right"> <select data-vf="currency" style="width:auto">${CT_CUR.map(x => `<option ${x === v.currency ? 'selected' : ''}>${x}</option>`).join('')}</select></td><td><input type="date" data-vf="issued_at" value="${v.issued_at || ''}"></td>
           <td>${v.file_path ? `<a href="#" data-pdf="${v.id}">📄 ${esc(v.file_name || 'faktura.pdf')}</a>` : '<span class="muted">bez PDF</span>'}</td><td><button class="btn sm" data-vrm="${v.id}">✕</button></td></tr>`
         : `<tr><td><b>${esc(v.number) || '—'}</b>${v.note ? `<div class="small muted">${esc(v.note)}</div>` : ''}</td><td>${esc(v.supplier) || '—'}</td><td class="r nowrap">${v.amount == null ? '—' : M(v.amount) + ' ' + esc(v.currency)}</td><td class="nowrap">${v.issued_at ? czDate(v.issued_at) : '—'}</td>
-          <td>${v.file_path ? `<a href="#" data-pdf="${v.id}">📄 ${esc(v.file_name || 'faktura.pdf')}</a>` : '<span class="muted">bez PDF</span>'}</td></tr>`).join('') || `<tr><td colspan="${edit ? 6 : 5}" class="empty">Zatím žádná faktura${edit ? ' — přidej ji tlačítkem níže.' : '.'}</td></tr>`}</tbody></table></div>
-      ${edit ? '<button class="btn" id="cInvAdd">＋ Přidat fakturu (PDF)</button>' : ''}`;
-    $('#cBody').innerHTML = `${banner}${top}
-    <h3 style="margin:0 0 8px">Obsah kontejneru</h3>
-    <div class="panel" style="overflow-x:auto;margin-bottom:12px"><table class="list"><thead><tr><th>Kód</th><th>Produkt</th><th class="r" style="width:${edit ? 130 : 110}px">Objednáno</th><th class="r" style="width:${edit ? 130 : 110}px">Dorazilo</th>${edit ? '<th style="width:90px">Jednotka</th>' : ''}<th></th>${edit ? '<th></th>' : ''}</tr></thead><tbody>
-      ${its.map(itemRow).join('') || `<tr><td colspan="${edit ? 7 : 5}" class="empty">Zatím bez položek${edit ? ' — přidej je níže.' : '.'}</td></tr>`}</tbody></table></div>
-    ${edit && !stocked() ? `<div class="panel panel-b"><label>＋ Přidat produkt z e-shopu (kód nebo název)</label><div style="position:relative"><input id="cAddQ" placeholder="např. Carrara click 6mm" autocomplete="off"><div id="cAddRes" class="results" hidden></div></div><div style="margin-top:10px"><button class="btn" id="cAddCustom">＋ Produkt, který není v Shoptetu</button> <span class="small muted">Do skladu se nenaskladní, jen se eviduje a dá se vyhledat.</span></div></div>` : ''}
-    ${invHtml}`;
+          <td>${v.file_path ? `<a href="#" data-pdf="${v.id}">📄 ${esc(v.file_name || 'faktura.pdf')}</a>` : '<span class="muted">bez PDF</span>'}</td></tr>`).join('') || `<tr><td colspan="${editing ? 6 : 5}" class="empty">Zatím žádná faktura${editing ? ' — přidej ji tlačítkem nahoře.' : '.'}</td></tr>`}</tbody></table></div></div>`;
+  }
+
+  // ---------- úpravy ----------
+  function editBody() {
+    const c = cur(); const its = itemsOf();
+    return `${hero()}
+    <div class="panel panel-b ct-sec"><div class="small" style="margin-bottom:12px">✏️ <b>Režim úprav</b> — změny se ukládají hned. Stav změníš kliknutím na krok nahoře.</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+      ${fld('number', 'Číslo kontejneru', 'např. MSCU1234567')}${fld('bl', 'B/L (konosament)')}${fld('booking', 'Booking')}${fld('supplier', 'Dodavatel')}${fld('carrier', 'Přepravce (rejdař)', 'např. MSC')}${fld('scac', 'Kód rejdaře (SCAC)', 'MSCU, MAEU… (prázdné = automaticky)')}
+      ${fld('vessel', 'Loď')}${fld('imo', 'IMO lodi', '7 číslic')}${fld('pol', 'Přístav nalodění')}${fld('pod', 'Přístav vyloďení', 'např. Hamburk')}
+      ${fld('etd', 'Odplutí (ETD)', '', 'date')}${fld('eta', 'Příjezd (ETA)', '', 'date')}${fld('ata', 'Skutečný příjezd', '', 'date')}${fld('delivered_at', 'Doručeno k nám', '', 'date')}</div>
+      <label style="margin-top:12px">Poznámka</label><input data-k="note" value="${esc(c.note)}"><div style="margin-top:10px">${trackLinks(c)}</div></div>
+    <div class="panel ct-sec"><div class="panel-h">Obsah kontejneru</div><div style="overflow-x:auto"><table class="list"><thead><tr><th>Kód</th><th>Produkt</th><th class="r" style="width:120px">Množství</th><th style="width:80px">Jednotka</th><th></th></tr></thead><tbody>
+      ${its.map(i => `<tr data-i="${i.id}"><td class="nowrap">${i.custom && !lockedItem(i) ? `<input data-f="code" value="${esc(i.code)}" placeholder="kód" style="width:110px">` : `<b>${esc(i.code) || '—'}</b>`}</td>
+        <td>${i.custom && !lockedItem(i) ? `<input data-f="name" value="${esc(i.name)}" placeholder="název"><input data-f="note" value="${esc(i.note)}" placeholder="EAN, MPN, poznámka…" style="margin-top:4px">` : esc(i.name)}${i.custom ? '<div style="margin-top:4px"><span class="tag">mimo Shoptet</span>' + (lockedItem(i) ? '' : ' <label style="display:inline"><input type="checkbox" data-f="custom" checked style="width:auto"> není v Shoptetu</label>') + '</div>' : ''}${i.stocked ? ' <span class="tag blue">naskladněno</span>' : ''}</td>
+        <td class="r"><input type="number" step="any" min="0" data-f="qty" value="${i.qty}" style="width:100px;text-align:right" ${lockedItem(i) ? 'disabled' : ''}></td><td><input data-f="unit" value="${esc(i.unit)}" style="width:70px" ${lockedItem(i) ? 'disabled' : ''}></td>
+        <td>${lockedItem(i) ? '' : `<button class="btn sm" data-rm="${i.id}">✕</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Zatím bez položek — přidej je níže.</td></tr>'}</tbody></table></div></div>
+    ${stocked() ? '' : `<div class="panel panel-b ct-sec"><label>＋ Přidat produkt z e-shopu (kód, název, EAN, MPN…)</label><div style="position:relative"><input id="cAddQ" placeholder="např. Carrara click 6mm" autocomplete="off"><div id="cAddRes" class="results" hidden></div></div><div style="margin-top:10px"><button class="btn" id="cAddCustom">＋ Produkt, který není v Shoptetu</button> <span class="small muted">Do skladu se nenaskladní, jen se eviduje a dá se vyhledat.</span></div></div>`}
+    ${invoicesPanel(true)}`;
+  }
+
+  // ---------- příjem a naskladnění ----------
+  function recvBody() {
+    const c = cur(); const its = itemsOf();
+    const pickable = i => !lockedItem(i) && !i.custom;
+    const chosen = its.filter(i => sel.has(i.id) && pickable(i));
+    const todo = its.filter(pickable);
+    return `${hero()}
+    <div class="panel panel-b ct-sec"><div class="ct-flow"><span class="on">1 · Co dorazilo</span><u></u><span class="on">2 · Vyber a uprav množství</span><u></u><span>3 · Kontrola a schválení</span></div>
+      <div style="display:grid;grid-template-columns:200px 1fr;gap:12px;margin-top:14px" class="ct-recv-top"><div><label>Doručeno k nám</label><input type="date" id="rDate" value="${esc(c.delivered_at || '')}"></div><div><label>Poznámka k doručení (stav obalů, poškození, rozdíly…)</label><input id="rNote" value="${esc(c.delivery_note)}" placeholder="např. 2 palety promáčknuté, jinak v pořádku"></div></div></div>
+    <div class="panel ct-sec"><div class="panel-h">Příjem položek <span class="sub">${chosen.length} z ${todo.length} vybráno</span><span class="grow"></span>
+      <button class="btn sm" id="rAllOk">Všechno dorazilo OK</button><button class="btn sm" id="rSelAll">Vybrat vše</button><button class="btn sm" id="rSelNone">Zrušit výběr</button></div>
+      <div style="overflow-x:auto"><table class="list"><thead><tr><th style="width:34px"></th><th>Produkt</th><th class="r">Objednáno</th><th style="width:150px">Stav</th><th class="r" style="width:150px">Naskladnit množství</th><th style="min-width:180px">Poznámka</th></tr></thead><tbody>
+      ${its.map(i => {
+        const lk = lockedItem(i);
+        return `<tr data-i="${i.id}" class="${lk ? 'ct-done' : ''}"><td>${pickable(i) ? `<input type="checkbox" data-sel ${sel.has(i.id) ? 'checked' : ''} style="width:auto">` : ''}</td>
+          <td><b>${esc(i.code) || '—'}</b> ${i.custom ? '<span class="tag">mimo Shoptet</span>' : ''}${i.stocked ? ' <span class="tag blue">naskladněno</span>' : ''}<div class="small muted">${esc(i.name)}</div></td>
+          <td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td>
+          <td>${lk ? recvBadge(i.recv_state) : `<select data-r="recv_state"><option value="">— zkontrolovat —</option>${Object.entries(CT_RECV).map(([k, v]) => `<option value="${k}" ${i.recv_state === k ? 'selected' : ''}>${v[0] === 'OK' ? 'Dorazilo OK' : v[0] === 'Méně' ? 'Dorazilo méně' : v[0] === 'Více' ? 'Dorazilo více' : v[0]}</option>`).join('')}</select>`}</td>
+          <td class="r nowrap">${lk || i.custom ? (i.got == null ? '—' : fmtQ(i.got) + ' ' + esc(i.unit)) : `<input type="number" step="any" min="0" data-r="got" value="${i.got ?? ''}" placeholder="${fmtQ(i.qty)}" style="width:100px;text-align:right"> ${esc(i.unit)}`}</td>
+          <td>${lk ? esc(i.recv_note) : `<input data-r="recv_note" value="${esc(i.recv_note)}" placeholder="poznámka k řádku">`}</td></tr>`;
+      }).join('') || '<tr><td colspan="6" class="empty">Kontejner nemá položky.</td></tr>'}</tbody></table></div>
+      <div class="ct-foot"><span class="muted small">Naskladní se jen zaškrtnuté řádky, v množství ve sloupci „Naskladnit množství“ (prázdné = objednané). Zbytek můžeš naskladnit později.</span><span class="grow"></span>
+        <button class="btn primary" id="rGo" ${chosen.length ? '' : 'disabled'}>📥 Naskladnit vybrané (${chosen.length}) do Shoptetu…</button></div></div>
+    ${stocked() ? '<div class="panel panel-b ct-sec">✅ Všechno je naskladněné do Shoptetu.</div>' : ''}`;
+  }
+
+  function draw() {
+    bar();
+    $('#cBody').innerHTML = mode === 'edit' ? editBody() : mode === 'recv' ? recvBody() : viewBody();
     bind();
   }
   function bind() {
     const b = $('#cBody');
     $$('[data-pdf]', b).forEach(a => a.onclick = e => { e.preventDefault(); const v = CT.inv.find(x => x.id === a.dataset.pdf); if (v) ctOpenInvoice(v); });
-    const stk = $('#cStock'); if (stk) stk.onclick = () => ctStockFlow(stk);
-    if (!edit) return;
+    const r2 = $('#cRecv2'); if (r2) r2.onclick = () => $('#cRecv').click();
+    const tk1 = $('#tkStart'); if (tk1) tk1.onclick = () => trackNow(tk1);
+    const tk2 = $('#tkRefresh'); if (tk2) tk2.onclick = () => trackNow(tk2, { force: true });
+    if (mode === 'recv') return bindRecv(b);
+    if (mode !== 'edit') return;
     $$('[data-st]', b).forEach(x => x.onclick = async () => { const st = x.dataset.st; try { await patch({ status: st, ...(st === 'delivered' && !cur().delivered_at ? { delivered_at: ymd(new Date()) } : {}) }); draw(); } catch (e) { toast(e.message, true); } });
     $$('[data-k]', b).forEach(i => i.onchange = async () => {
-      const k = i.dataset.k; let v = i.value.trim(); if (k === 'number') v = normCt(v); if (['etd', 'eta', 'ata', 'delivered_at'].includes(k)) v = v || null;
-      try { await patch({ [k]: v }); if (k === 'number') i.value = v; if (['number', 'eta', 'ata', 'imo', 'delivered_at'].includes(k)) draw(); else head(); } catch (e) { toast(e.message, true); }
+      const k = i.dataset.k; let v = i.value.trim(); if (k === 'number') v = normCt(v); if (k === 'scac') v = v.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); if (['etd', 'eta', 'ata', 'delivered_at'].includes(k)) v = v || null;
+      try { await patch({ [k]: v }); if (k === 'number') i.value = v; if (['number', 'eta', 'ata', 'delivered_at', 'supplier', 'carrier'].includes(k)) draw(); } catch (e) { toast(e.message, true); }
     });
     $$('[data-i] [data-f]', b).forEach(i => i.onchange = async () => {
       const row = CT.items.find(x => x.id === i.closest('tr').dataset.i); const f = i.dataset.f;
-      const v = (f === 'skip' || f === 'custom') ? i.checked : (f === 'unit' || f === 'code' || f === 'name' || f === 'note') ? i.value.trim() : (i.value.trim() === '' && f === 'got' ? null : toNum(i.value));
+      const v = f === 'custom' ? i.checked : (f === 'unit' || f === 'code' || f === 'name' || f === 'note') ? i.value.trim() : toNum(i.value);
       try { check(await sb.from('ct_items').update({ [f]: v }).eq('id', row.id)); row[f] = v; if (f === 'custom') draw(); } catch (e) { toast(e.message, true); }
     });
     $$('[data-rm]', b).forEach(x => x.onclick = async () => { try { check(await sb.from('ct_items').delete().eq('id', x.dataset.rm)); CT.items = CT.items.filter(i => i.id !== x.dataset.rm); draw(); } catch (e) { toast(e.message, true); } });
@@ -2745,6 +2858,30 @@ async function renderContainer(id) {
     };
     q.onblur = () => setTimeout(() => { res.innerHTML = ''; res.hidden = true; }, 150);
   }
+  function bindRecv(b) {
+    const setItem = async (row, f) => { check(await sb.from('ct_items').update(f).eq('id', row.id)); Object.assign(row, f); };
+    $('#rDate').onchange = async e => { try { await patch({ delivered_at: e.target.value || null }); } catch (er) { toast(er.message, true); } };
+    $('#rNote').onchange = async e => { try { await patch({ delivery_note: e.target.value.trim() }); } catch (er) { toast(er.message, true); } };
+    $$('[data-sel]', b).forEach(x => x.onchange = () => { const idr = x.closest('tr').dataset.i; x.checked ? sel.add(idr) : sel.delete(idr); draw(); });
+    $$('[data-r]', b).forEach(x => x.onchange = async () => {
+      const row = CT.items.find(i => i.id === x.closest('tr').dataset.i); const f = x.dataset.r;
+      try {
+        if (f === 'recv_state') {
+          const patchF = { recv_state: x.value };
+          if (x.value === 'ok' && row.got == null) patchF.got = toNum(row.qty);
+          if (x.value === 'missing') { patchF.got = 0; sel.delete(row.id); } else if (x.value) sel.add(row.id); else sel.delete(row.id);
+          await setItem(row, patchF); draw();
+        } else if (f === 'got') { const v = x.value.trim() === '' ? null : toNum(x.value); await setItem(row, { got: v }); if (v != null && v !== toNum(row.qty) && !row.recv_state) await setItem(row, { recv_state: v < toNum(row.qty) ? 'short' : 'more' }); draw(); }
+        else await setItem(row, { recv_note: x.value.trim() });
+      } catch (e) { toast(e.message, true); }
+    });
+    $('#rAllOk').onclick = async () => {
+      try { for (const i of itemsOf().filter(i => !lockedItem(i) && !i.custom)) { await setItem(i, { recv_state: 'ok', ...(i.got == null ? { got: toNum(i.qty) } : {}) }); sel.add(i.id); } draw(); } catch (e) { toast(e.message, true); }
+    };
+    $('#rSelAll').onclick = () => { itemsOf().filter(i => !lockedItem(i) && !i.custom).forEach(i => sel.add(i.id)); draw(); };
+    $('#rSelNone').onclick = () => { sel.clear(); draw(); };
+    $('#rGo').onclick = () => ctStockFlow($('#rGo'));
+  }
   async function addCustom() {
     const v = await modal({ title: 'Produkt mimo Shoptet', focus: '[data-n="name"]',
       body: `<label>Název produktu</label><input data-n="name" placeholder="např. Carrara click 6mm, bílá"><label>Kód / EAN / MPN <span class="muted">(volitelné, dá se podle něj hledat)</span></label><input data-n="code">
@@ -2762,7 +2899,7 @@ async function renderContainer(id) {
       body: `<label>Číslo faktury</label><input data-n="number" placeholder="např. INV-2026-0123"><label>Dodavatel</label><input data-n="supplier" value="${esc(cur().supplier)}">
         <div style="display:grid;grid-template-columns:1fr 100px;gap:8px"><div><label>Částka</label><input data-n="amount" inputmode="decimal"></div><div><label>Měna</label><select data-n="currency">${CT_CUR.map(x => `<option>${x}</option>`).join('')}</select></div></div>
         <label>Datum vystavení</label><input type="date" data-n="issued_at"><label>PDF faktury (max 15 MB)</label><input type="file" data-n="file" accept="application/pdf,.pdf"><label>Poznámka</label><input data-n="note">`,
-      actions: [{ label: 'Zrušit', value: null }, { label: 'Přidat', cls: 'primary', value: bd => { const o = Object.fromEntries($$('[data-n]', bd).map(x => [x.dataset.n, x.type === 'file' ? x.files[0] : x.value.trim()])); return o; } }] });
+      actions: [{ label: 'Zrušit', value: null }, { label: 'Přidat', cls: 'primary', value: bd => Object.fromEntries($$('[data-n]', bd).map(x => [x.dataset.n, x.type === 'file' ? x.files[0] : x.value.trim()])) }] });
     if (!v) return;
     const file = v.file;
     if (file && !(file.type === 'application/pdf' || /\.pdf$/i.test(file.name))) return toast('Nahrát jde jen PDF.', true);
@@ -2776,35 +2913,48 @@ async function renderContainer(id) {
       CT.inv.push(ins); draw(); toast('Faktura přidána');
     } catch (e) { toast(e.message, true); }
   }
-  // naskladnění ve dvou krocích: 1) kontrola (nic se nezapisuje) 2) potvrzení opsáním čísla kontejneru
+  // naskladnění vybraných řádků: kontrola (nic se nezapisuje) → schválení opsáním čísla kontejneru
   async function ctStockFlow(btn) {
     const stc = cfg(); const stockId = Number(stc.shoptetStockId) || 1; const stockName = stc.shoptetStockName || 'sklad ' + stockId;
-    if (!cur().number) return toast('Kontejner nemá číslo — doplň ho v úpravách.', true);
+    const c = cur();
+    if (!c.number) return toast('Kontejner nemá číslo — doplň ho v úpravách.', true);
+    const chosen = itemsOf().filter(i => sel.has(i.id) && !lockedItem(i) && !i.custom);
+    if (!chosen.length) return toast('Nejdřív zaškrtni řádky, které chceš naskladnit.', true);
+    const unchecked = chosen.filter(i => !i.recv_state);
+    if (unchecked.length) return toast('U ' + unchecked.map(i => i.code).join(', ') + ' nejdřív vyber stav příjmu (co dorazilo).', true);
+    const bad = chosen.filter(i => !(amt(i) > 0));
+    if (bad.length) return toast('U ' + bad.map(i => i.code).join(', ') + ' je nulové množství.', true);
+    if (c.status !== 'delivered') {
+      if (!(await confirmBox('Označit kontejner jako doručený?', 'Naskladnit jde jen doručený kontejner. Stav se změní na „Doručeno“.', { ok: 'Označit a pokračovat' }))) return;
+      try { await patch({ status: 'delivered', ...(c.delivered_at ? {} : { delivered_at: ymd(new Date()) }) }); } catch (e) { return toast(e.message, true); }
+    }
+    const itemIds = chosen.map(i => i.id);
     btn.disabled = true; const old = btn.innerHTML; btn.innerHTML = '<span class="spin"></span> Kontroluji…';
     let r;
-    try { r = await ctCall({ action: 'ct_check', containerId: id, stockId }); } catch (e) { toast(e.message, true); btn.disabled = false; btn.innerHTML = old; return; }
+    try { r = await ctCall({ action: 'ct_check', containerId: id, stockId, itemIds }); } catch (e) { toast(e.message, true); btn.disabled = false; btn.innerHTML = old; return; }
     btn.disabled = false; btn.innerHTML = old;
     const ordered = x => CT.items.find(i => i.id === x.id);
-    const rows = r.lines.map(x => { const o = ordered(x); const diff = o && toNum(o.qty) !== x.amount; const bad = r.problems.find(p => p.id === x.id);
-      return `<div ${bad ? 'class="err"' : ''}><code>${esc(x.code)}</code><span>${esc(x.shop || x.name)}${bad ? `<br><b class="warn-t">⚠ ${esc(bad.message)}</b>` : ''}${diff ? `<br><span class="warn-t small">objednáno ${fmtQ(o.qty)}, dorazilo ${fmtQ(x.amount)}</span>` : ''}</span><b>+${fmtQ(x.amount)} ${esc(x.unit)}</b></div>`; }).join('');
+    const rows = r.lines.map(x => { const o = ordered(x); const diff = o && toNum(o.qty) !== x.amount; const pr = r.problems.find(p => p.id === x.id);
+      return `<div ${pr ? 'class="err"' : ''}><code>${esc(x.code)}</code><span>${esc(x.shop || x.name)}${pr ? `<br><b class="warn-t">⚠ ${esc(pr.message)}</b>` : ''}${diff ? `<br><span class="warn-t small">objednáno ${fmtQ(o.qty)}, naskladňuje se ${fmtQ(x.amount)}</span>` : ''}${o && o.recv_note ? `<br><span class="small muted">↳ ${esc(o.recv_note)}</span>` : ''}</span><b>+${fmtQ(x.amount)} ${esc(x.unit)}</b></div>`; }).join('');
     const odd = r.lines.filter(x => !['ks', 'm²'].includes(x.unit));
-    const go = await modal({ title: r.ok ? 'Krok 1/2 · Kontrola před naskladněním' : 'Kontrola našla problémy',
+    const rest = itemsOf().filter(i => !lockedItem(i) && !i.custom && !itemIds.includes(i.id)).length;
+    const go = await modal({ title: r.ok ? 'Krok 3/4 · Kontrola před naskladněním' : 'Kontrola našla problémy',
       body: `<p>Kontejner <b>${esc(r.number)}</b> → sklad <b>${esc(r.stock.title || stockName)}</b>. Přičte se:</p><div class="push-list">${rows}</div>
-        ${r.ok ? `${odd.length ? `<p class="warn-t">⚠ U ${odd.map(l => esc(l.code)).join(', ')} je jiná jednotka než ks / m². Ve Shoptetu se sklad počítá ve své jednotce — ověř „Dorazilo“.</p>` : ''}<p class="muted small">Zatím se nic nezapsalo. Pokračuj, jen pokud počty sedí s fakturou a s tím, co skutečně dorazilo.</p>` : '<p class="muted small">Oprav to v úpravách kontejneru a spusť kontrolu znovu. Nic se nezapsalo.</p>'}`,
+        ${r.ok ? `${odd.length ? `<p class="warn-t">⚠ U ${odd.map(l => esc(l.code)).join(', ')} je jiná jednotka než ks / m². Ve Shoptetu se sklad počítá ve své jednotce — ověř množství.</p>` : ''}${rest ? `<p class="muted small">Zbývá ${rest} ${rest === 1 ? 'řádek' : rest < 5 ? 'řádky' : 'řádků'}, které se nenaskladní teď — půjdou později.</p>` : ''}<p class="muted small">Zatím se nic nezapsalo.</p>` : '<p class="muted small">Oprav to a spusť kontrolu znovu. Nic se nezapsalo.</p>'}`,
       actions: r.ok ? [{ label: 'Zrušit', value: false }, { label: 'Pokračovat ke schválení →', cls: 'primary', value: true }] : [{ label: 'Zavřít', value: false, cls: 'primary' }] });
     if (!go || !r.ok) return;
-    const typed = await modal({ title: 'Krok 2/2 · Schválení', focus: '[data-cf]',
+    const typed = await modal({ title: 'Krok 4/4 · Schválení', focus: '[data-cf]',
       body: `<p>Do Shoptetu se <b>přičte ${r.lines.length} ${r.lines.length === 1 ? 'položka' : r.lines.length < 5 ? 'položky' : 'položek'}</b>. Zápis už nejde vzít zpět (jen ručně ve Shoptetu).</p><p>Pro potvrzení opiš číslo kontejneru: <b>${esc(r.number)}</b></p><input data-cf autocomplete="off" placeholder="${esc(r.number)}" style="text-transform:uppercase">`,
       actions: [{ label: 'Zrušit', value: null }, { label: 'Naskladnit do Shoptetu', cls: 'primary', value: bd => $('[data-cf]', bd).value.trim() }] });
     if (typed == null) return;
     if (normCt(typed) !== normCt(r.number)) return toast('Číslo nesedí — nic se nenaskladnilo.', true);
     btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Posílám do Shoptetu…';
     try {
-      const out = await ctCall({ action: 'ct_stock_in', containerId: id, stockId, sig: r.sig, confirm: typed });
-      await loadCt(); draw();
-      const good = out.results.filter(x => x.status === 'ok').length; const bad = out.results.filter(x => x.status === 'error' || x.status === 'duplicate');
-      if (!bad.length) toast(`Naskladněno do Shoptetu: ${good} řádků ✓`);
-      else await modal({ title: good ? `Naskladněno ${good}, ale ${bad.length} se nepovedlo` : 'Naskladnění se nepovedlo', body: `<div class="push-list err">${bad.map(x => `<div><code>${esc(x.code)}</code><span>${esc(x.message || x.status)}</span></div>`).join('')}</div><p class="muted small">Co se povedlo, je označené. Ostatní můžeš po opravě poslat znovu.</p>`, actions: [{ label: 'Rozumím', value: null, cls: 'primary' }] });
+      const out = await ctCall({ action: 'ct_stock_in', containerId: id, stockId, sig: r.sig, confirm: typed, itemIds });
+      await loadCt(); sel.clear(); draw();
+      const good = out.results.filter(x => x.status === 'ok').length; const badr = out.results.filter(x => x.status === 'error' || x.status === 'duplicate');
+      if (!badr.length) toast(`Naskladněno do Shoptetu: ${good} řádků ✓`);
+      else await modal({ title: good ? `Naskladněno ${good}, ale ${badr.length} se nepovedlo` : 'Naskladnění se nepovedlo', body: `<div class="push-list err">${badr.map(x => `<div><code>${esc(x.code)}</code><span>${esc(x.message || x.status)}</span></div>`).join('')}</div><p class="muted small">Co se povedlo, je označené. Ostatní můžeš po opravě poslat znovu.</p>`, actions: [{ label: 'Rozumím', value: null, cls: 'primary' }] });
     } catch (e) { toast(e.message, true); btn.disabled = false; btn.innerHTML = old; }
   }
   draw();
