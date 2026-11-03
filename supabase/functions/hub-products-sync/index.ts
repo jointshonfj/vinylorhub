@@ -64,6 +64,10 @@ async function runSync(sb: any, minGapMs: number) {
   const iVar = headers.map((h, i) => (h.startsWith('variant:') ? i : -1)).filter(i => i >= 0);
   const get = (r: string[], n: string) => { const i = col(n); return i >= 0 ? String(r[i] ?? '').trim() : ''; };
 
+  // identifikátory pro hledání: EAN, MPN / číslo dílu, výrobce a vše, co jim je podobné (název sloupce se u Shoptetu může lišit)
+  const idCols = headers.map((h, i) => ({ h: h.toLowerCase(), i })).filter(x => /ean|gtin|barcode|mpn|part|plu|number|sku|manufact|producer/.test(x.h) && x.h !== 'code' && x.h !== 'paircode');
+  const first = (r: string[], re: RegExp) => { const x = idCols.find(c => re.test(c.h)); return x ? String(r[x.i] ?? '').trim() : ''; };
+
   const map = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
     const code = String(r[iCode] ?? '').trim();
@@ -76,6 +80,10 @@ async function runSync(sb: any, minGapMs: number) {
       price_vat: num(r[iPrice]) ?? 0,
       standard_price: num(get(r, 'standardPrice')),
       action_price: num(get(r, 'actionPrice')),
+      ean: first(r, /^(ean|gtin|barcode)/),
+      mpn: first(r, /^(mpn|partnumber|part_number|part number|productnumber|manufacturercode)/),
+      manufacturer: first(r, /^manufact|^producer/),
+      keywords: [...new Set(idCols.map(c => String(r[c.i] ?? '').trim()).filter(Boolean))].join(' '),
       visible: (get(r, 'productVisibility') || 'visible') === 'visible' && get(r, 'variantVisibility') !== '0',
       updated_at: now,
     });
@@ -91,7 +99,8 @@ async function runSync(sb: any, minGapMs: number) {
   const { error: e2 } = await sb.from('hub_products').delete().lt('updated_at', now);
   if (e2) return fail('hub_products: ' + e2.message);
 
-  await sb.from('hub_settings').update({ products_synced_at: now, products_error: null, products_count: items.length }).eq('id', 1);
+  const { data: fresh } = await sb.from('hub_settings').select('data').eq('id', 1).single();
+  await sb.from('hub_settings').update({ products_synced_at: now, products_error: null, products_count: items.length, data: { ...(fresh?.data || {}), csvHeaders: headers } }).eq('id', 1);
   return { ok: true, count: items.length };
 }
 

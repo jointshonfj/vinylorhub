@@ -206,8 +206,8 @@ async function loadUsers() {
 }
 async function loadProducts(force) {
   if (S.products && !force) return S.products;
-  const rows = await fetchAll(() => sb.from('hub_products').select('code,name,variant,supplier,price_vat,action_price,visible').order('code'));
-  S.products = rows.map(p => ({ ...p, priceVat: Number(p.price_vat), actionPrice: p.action_price == null ? null : Number(p.action_price), fcode: fold(p.code), text: fold(`${p.code} ${p.name} ${p.variant} ${p.supplier}`) }));
+  const rows = await fetchAll(() => sb.from('hub_products').select('code,name,variant,supplier,price_vat,action_price,visible,ean,mpn,manufacturer,keywords').order('code'));
+  S.products = rows.map(p => ({ ...p, priceVat: Number(p.price_vat), actionPrice: p.action_price == null ? null : Number(p.action_price), fcode: fold(p.code), text: fold(`${p.code} ${p.name} ${p.variant} ${p.supplier} ${p.ean || ''} ${p.mpn || ''} ${p.manufacturer || ''} ${p.keywords || ''}`) }));
   return S.products;
 }
 function searchProducts(q, includeHidden) {
@@ -2585,7 +2585,7 @@ function drawCt() {
   const itemsOf = id => CT.items.filter(i => i.container_id === id);
   // vyhledávání produktu: jednak podle textu v položce, jednak podle kódu produktu nalezeného v e-shopu
   const codes = new Set(tokens.length ? searchProducts(CT.q, true).map(p => p.code) : []);
-  const itemHit = i => tokens.length && (codes.has(i.code) || tokens.every(t => normQ(i.code + ' ' + i.name).includes(t)));
+  const itemHit = i => tokens.length && (codes.has(i.code) || tokens.every(t => normQ([i.code, i.name, i.note, i.ean, i.mpn].join(' ')).includes(t)));
   const invsOf = id => CT.inv.filter(v => v.container_id === id);
   const invText = v => normQ([v.number, v.supplier, v.note, v.file_name].join(' '));
   const invHit = v => tokens.length && tokens.every(t => invText(v).includes(t));
@@ -2661,7 +2661,7 @@ async function renderContainer(id) {
   }
   function draw() {
     const c = cur(); head(); const its = itemsOf(); const invs = invsOf(); const d = daysTo(ctEta(c));
-    const open = its.filter(i => !i.stocked && !i.skip);
+    const open = its.filter(i => !i.stocked && !i.skip && !i.custom);
     const top = edit
       ? `<div class="panel panel-b" style="margin-bottom:14px"><div class="small" style="margin-bottom:10px">✏️ <b>Režim úprav</b> — změny se ukládají hned. Až budeš hotový, klikni na „Hotovo“.</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">${[['planned', 'Plánováno'], ['sailing', 'Na cestě'], ['port', 'V přístavu'], ['delivered', 'Doručeno']].map(([k, l]) => `<button class="chip ${c.status === k ? 'on' : ''}" data-st="${k}">${l}</button>`).join('')}<span class="grow"></span>${trackLinks(c)}</div>
@@ -2679,14 +2679,14 @@ async function renderContainer(id) {
     const banner = !edit && c.status === 'delivered' && !stocked() && open.length ? `<div class="oj-banner" style="margin-bottom:14px"><span>📥 Kontejner je doručený a čeká na naskladnění do Shoptetu (${open.length} ${open.length === 1 ? 'položka' : open.length < 5 ? 'položky' : 'položek'}).</span><span class="grow"></span><button class="btn primary" id="cStock">📥 Naskladnit do Shoptetu…</button></div>` : '';
     const locked = i => i.stocked || stocked();
     const itemRow = i => edit
-      ? `<tr data-i="${i.id}"><td class="nowrap"><b>${esc(i.code)}</b></td><td>${esc(i.name)}</td>
+      ? `<tr data-i="${i.id}"><td class="nowrap">${i.custom && !locked(i) ? `<input data-f="code" value="${esc(i.code)}" placeholder="kód" style="width:110px">` : `<b>${esc(i.code)}</b>`}</td><td>${i.custom && !locked(i) ? `<input data-f="name" value="${esc(i.name)}" placeholder="název"><input data-f="note" value="${esc(i.note)}" placeholder="EAN, MPN, poznámka…" style="margin-top:4px">` : esc(i.name)}${i.custom && locked(i) && i.note ? `<div class="small muted">${esc(i.note)}</div>` : ''}</td>
         <td class="r"><input type="number" step="any" min="0" data-f="qty" value="${i.qty}" style="width:100px;text-align:right" ${locked(i) ? 'disabled' : ''}></td>
         <td class="r"><input type="number" step="any" min="0" data-f="got" value="${i.got ?? ''}" placeholder="${fmtQ(i.qty)}" style="width:100px;text-align:right" ${locked(i) ? 'disabled' : ''}></td>
         <td><input data-f="unit" value="${esc(i.unit)}" style="width:70px" ${locked(i) ? 'disabled' : ''}></td>
-        <td class="small nowrap">${i.stocked ? '<span class="tag blue">naskladněno</span>' : `<label><input type="checkbox" data-f="skip" ${i.skip ? 'checked' : ''}> nenaskladňovat</label>`}</td>
+        <td class="small nowrap">${i.stocked ? '<span class="tag blue">naskladněno</span>' : `${i.custom ? '<span class="tag">mimo Shoptet</span><br>' : ''}<label><input type="checkbox" data-f="skip" ${i.skip ? 'checked' : ''}> nenaskladňovat</label>${i.custom ? '<br><label><input type="checkbox" data-f="custom" checked> není v Shoptetu</label>' : ''}`}</td>
         <td>${locked(i) ? '' : `<button class="btn sm" data-rm="${i.id}">✕</button>`}</td></tr>`
-      : `<tr><td class="nowrap"><b>${esc(i.code)}</b></td><td>${esc(i.name)}</td><td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td>
-        <td class="r nowrap">${i.got == null ? '<span class="muted">—</span>' : `<b ${toNum(i.got) !== toNum(i.qty) ? 'class="warn-t"' : ''}>${fmtQ(i.got)} ${esc(i.unit)}</b>`}</td><td class="small">${i.stocked ? '<span class="tag blue">naskladněno</span>' : i.skip ? '<span class="muted">nenaskladňovat</span>' : ''}</td></tr>`;
+      : `<tr><td class="nowrap"><b>${esc(i.code) || '—'}</b></td><td>${esc(i.name)}${i.custom ? ' <span class="tag">mimo Shoptet</span>' : ''}${i.note ? `<div class="small muted">${esc(i.note)}</div>` : ''}${!i.custom && (i.ean || i.mpn) ? `<div class="small muted">${[i.ean && 'EAN ' + esc(i.ean), i.mpn && 'MPN ' + esc(i.mpn)].filter(Boolean).join(' · ')}</div>` : ''}</td><td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td>
+        <td class="r nowrap">${i.got == null ? '<span class="muted">—</span>' : `<b ${toNum(i.got) !== toNum(i.qty) ? 'class="warn-t"' : ''}>${fmtQ(i.got)} ${esc(i.unit)}</b>`}</td><td class="small">${i.stocked ? '<span class="tag blue">naskladněno</span>' : i.custom ? '<span class="muted">mimo Shoptet</span>' : i.skip ? '<span class="muted">nenaskladňovat</span>' : ''}</td></tr>`;
     const invHtml = `<h3 style="margin:18px 0 8px">Faktury <span class="muted small">${invs.length ? '(' + invs.length + ')' : ''}</span></h3>
       <div class="panel" style="overflow-x:auto;margin-bottom:12px"><table class="list"><thead><tr><th>Číslo faktury</th><th>Dodavatel</th><th class="r">Částka</th><th>Datum</th><th>PDF</th>${edit ? '<th></th>' : ''}</tr></thead><tbody>
       ${invs.map(v => edit
@@ -2699,7 +2699,7 @@ async function renderContainer(id) {
     <h3 style="margin:0 0 8px">Obsah kontejneru</h3>
     <div class="panel" style="overflow-x:auto;margin-bottom:12px"><table class="list"><thead><tr><th>Kód</th><th>Produkt</th><th class="r" style="width:${edit ? 130 : 110}px">Objednáno</th><th class="r" style="width:${edit ? 130 : 110}px">Dorazilo</th>${edit ? '<th style="width:90px">Jednotka</th>' : ''}<th></th>${edit ? '<th></th>' : ''}</tr></thead><tbody>
       ${its.map(itemRow).join('') || `<tr><td colspan="${edit ? 7 : 5}" class="empty">Zatím bez položek${edit ? ' — přidej je níže.' : '.'}</td></tr>`}</tbody></table></div>
-    ${edit && !stocked() ? `<div class="panel panel-b"><label>＋ Přidat produkt z e-shopu (kód nebo název)</label><div style="position:relative"><input id="cAddQ" placeholder="např. Carrara click 6mm" autocomplete="off"><div id="cAddRes" class="results" hidden></div></div></div>` : ''}
+    ${edit && !stocked() ? `<div class="panel panel-b"><label>＋ Přidat produkt z e-shopu (kód nebo název)</label><div style="position:relative"><input id="cAddQ" placeholder="např. Carrara click 6mm" autocomplete="off"><div id="cAddRes" class="results" hidden></div></div><div style="margin-top:10px"><button class="btn" id="cAddCustom">＋ Produkt, který není v Shoptetu</button> <span class="small muted">Do skladu se nenaskladní, jen se eviduje a dá se vyhledat.</span></div></div>` : ''}
     ${invHtml}`;
     bind();
   }
@@ -2715,8 +2715,8 @@ async function renderContainer(id) {
     });
     $$('[data-i] [data-f]', b).forEach(i => i.onchange = async () => {
       const row = CT.items.find(x => x.id === i.closest('tr').dataset.i); const f = i.dataset.f;
-      const v = f === 'skip' ? i.checked : f === 'unit' ? i.value.trim() : (i.value.trim() === '' && f === 'got' ? null : toNum(i.value));
-      try { check(await sb.from('ct_items').update({ [f]: v }).eq('id', row.id)); row[f] = v; } catch (e) { toast(e.message, true); }
+      const v = (f === 'skip' || f === 'custom') ? i.checked : (f === 'unit' || f === 'code' || f === 'name' || f === 'note') ? i.value.trim() : (i.value.trim() === '' && f === 'got' ? null : toNum(i.value));
+      try { check(await sb.from('ct_items').update({ [f]: v }).eq('id', row.id)); row[f] = v; if (f === 'custom') draw(); } catch (e) { toast(e.message, true); }
     });
     $$('[data-rm]', b).forEach(x => x.onclick = async () => { try { check(await sb.from('ct_items').delete().eq('id', x.dataset.rm)); CT.items = CT.items.filter(i => i.id !== x.dataset.rm); draw(); } catch (e) { toast(e.message, true); } });
     $$('[data-v] [data-vf]', b).forEach(i => i.onchange = async () => {
@@ -2730,19 +2730,32 @@ async function renderContainer(id) {
       try { if (v.file_path) await sb.storage.from('ct-invoices').remove([v.file_path]); check(await sb.from('ct_invoices').delete().eq('id', v.id)); CT.inv = CT.inv.filter(i => i.id !== v.id); draw(); } catch (e) { toast(e.message, true); }
     });
     const add = $('#cInvAdd'); if (add) add.onclick = addInvoice;
+    const ac = $('#cAddCustom'); if (ac) ac.onclick = addCustom;
     const q = $('#cAddQ'), res = $('#cAddRes');
     if (!q) return;
     q.oninput = () => {
       const f = searchProducts(q.value, false).slice(0, 8);
       res.hidden = !f.length;
-      res.innerHTML = f.length ? f.map((p, k) => `<div class="res" data-p="${k}" style="padding:8px 12px;cursor:pointer"><b>${esc(p.code)}</b> ${esc(p.name)}${p.variant ? ', ' + esc(p.variant) : ''}</div>`).join('') : '';
+      res.innerHTML = f.length ? f.map((p, k) => `<div class="res" data-p="${k}" style="padding:8px 12px;cursor:pointer"><b>${esc(p.code)}</b> ${esc(p.name)}${p.variant ? ', ' + esc(p.variant) : ''}${p.ean || p.mpn ? `<span class="small muted"> · ${[p.ean && 'EAN ' + esc(p.ean), p.mpn && 'MPN ' + esc(p.mpn)].filter(Boolean).join(' · ')}</span>` : ''}</div>`).join('') : '';
       $$('[data-p]', res).forEach(r => r.onmousedown = async e => {
         e.preventDefault(); const p = f[r.dataset.p]; const sort = itemsOf().length;
-        try { const row = check(await sb.from('ct_items').insert({ container_id: id, code: p.code, name: p.name + (p.variant ? ', ' + p.variant : ''), qty: 1, unit: 'ks', sort }).select().single()); CT.items.push(row); draw(); $('#cAddQ').focus(); }
+        try { const row = check(await sb.from('ct_items').insert({ container_id: id, code: p.code, name: p.name + (p.variant ? ', ' + p.variant : ''), qty: 1, unit: 'ks', sort, ean: p.ean || '', mpn: p.mpn || '' }).select().single()); CT.items.push(row); draw(); $('#cAddQ').focus(); }
         catch (er) { toast(er.message, true); }
       });
     };
     q.onblur = () => setTimeout(() => { res.innerHTML = ''; res.hidden = true; }, 150);
+  }
+  async function addCustom() {
+    const v = await modal({ title: 'Produkt mimo Shoptet', focus: '[data-n="name"]',
+      body: `<label>Název produktu</label><input data-n="name" placeholder="např. Carrara click 6mm, bílá"><label>Kód / EAN / MPN <span class="muted">(volitelné, dá se podle něj hledat)</span></label><input data-n="code">
+        <div style="display:grid;grid-template-columns:1fr 100px;gap:8px"><div><label>Množství</label><input data-n="qty" inputmode="decimal" value="1"></div><div><label>Jednotka</label><input data-n="unit" value="ks"></div></div><label>Poznámka</label><input data-n="note" placeholder="EAN, MPN, rozměr, barva…">`,
+      actions: [{ label: 'Zrušit', value: null }, { label: 'Přidat', cls: 'primary', value: bd => Object.fromEntries($$('[data-n]', bd).map(x => [x.dataset.n, x.value.trim()])) }] });
+    if (!v) return;
+    if (!v.name) return toast('Doplň název produktu.', true);
+    try {
+      const row = check(await sb.from('ct_items').insert({ container_id: id, code: v.code, name: v.name, qty: toNum(v.qty) || 1, unit: v.unit || 'ks', note: v.note, custom: true, sort: itemsOf().length }).select().single());
+      CT.items.push(row); draw(); toast('Přidáno');
+    } catch (e) { toast(e.message, true); }
   }
   async function addInvoice() {
     const v = await modal({ title: 'Přidat fakturu', focus: '[data-n="number"]',

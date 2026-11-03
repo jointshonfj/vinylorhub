@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
       const { data: items } = await sb.from('ct_items').select('*').eq('container_id', containerId).order('sort').order('created_at');
       const { data: done } = await sb.from('ct_stock_log').select('item_id').eq('container_id', containerId);
       const doneIds = new Set((done || []).map((x: any) => x.item_id));
-      const rows = (items || []).filter((i: any) => !i.skip && !i.stocked && !doneIds.has(i.id)).map((i: any) => ({ id: i.id, code: String(i.code || '').trim(), name: i.name, unit: i.unit, amount: Number(i.got ?? i.qty) }));
+      const rows = (items || []).filter((i: any) => !i.custom && !i.skip && !i.stocked && !doneIds.has(i.id)).map((i: any) => ({ id: i.id, code: String(i.code || '').trim(), name: i.name, unit: i.unit, amount: Number(i.got ?? i.qty) }));
       if (!rows.length) return json({ error: 'Není co naskladňovat.' }, 409);
       if (rows.length > 150) return json({ error: 'Kontejner má víc než 150 položek.' }, 400);
       const { data: prods } = await sb.from('hub_products').select('code,name').in('code', rows.map(r => r.code));
@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
         }
         await sleep(250);
       }
-      const { data: left } = await sb.from('ct_items').select('id').eq('container_id', containerId).eq('stocked', false).eq('skip', false);
+      const { data: left } = await sb.from('ct_items').select('id').eq('container_id', containerId).eq('stocked', false).eq('skip', false).eq('custom', false);
       const all = !(left || []).length;
       await sb.from('ct_containers').update({ stock_id: stockId, updated_at: new Date().toISOString(), ...(all ? { stocked_at: new Date().toISOString() } : {}) }).eq('id', containerId);
       await audit('shoptet_container_stock_in', { container: c.number, stock: stockId, ok: results.filter(x => x.status === 'ok').length, failed: results.filter(x => x.status === 'error').length });

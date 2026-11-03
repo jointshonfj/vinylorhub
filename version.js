@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.13.0';
+export const APP_VERSION = '0.13.1';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.13.1', d: '2026-11-03', t: ['Kontejnery: možnost přidat produkt, který není v Shoptetu (eviduje se a hledá se, nenaskladňuje se)', 'Hledání produktů (i v nabídkách) bere i EAN, MPN, výrobce a další identifikátory z exportu Shoptetu'] },
   { v: '0.13.0', d: '2026-11-03', t: ['Kontejnery: detail je jen náhled, úpravy se zapnou tlačítkem „Upravit“ (nový kontejner se otevře rovnou k vyplnění)', 'Faktury ke kontejneru (číslo, částka, PDF) a hledání podle nich', 'Naskladnění kontejneru do Shoptetu ve dvou krocích: kontrola + schválení opsáním čísla kontejneru, sloupec „Dorazilo“, ochrana proti dvojímu odeslání'] },
   { v: '0.12.0', d: '2026-11-02', t: ['Nová aplikace Kontejnery (zatím jen pro Filipa, ostatní ji vidí zamčenou): čísla kontejnerů, loď, ETA, položky z e-shopu, hledání „kdy k nám přijde …“', 'Přístup k aplikacím po uživatelích (hlídá i databáze)'] },
   { v: '0.11.2', d: '2026-10-29', t: ['Naskladnění: doručené a naskladněné svozy z OrderJoi se zobrazují i v hlavním seznamu příjemek (označené „svoz“)'] },
