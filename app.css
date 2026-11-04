@@ -983,8 +983,8 @@ tr.ct-done { opacity: .6; }
 .ct-card-body { padding: 12px 14px 8px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
 .ct-voy { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); }
 .ct-port { max-width: 82px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ct-track { position: relative; height: 4px; border-radius: 99px; background: var(--line-2); margin: 10px 4px; }
-.ct-track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; background: var(--c); transition: width .8s var(--ease, ease); }
+.ct-lane { position: relative; height: 4px; border-radius: 99px; background: var(--line-2); margin: 10px 4px; }
+.ct-lane i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; background: var(--c); transition: width .8s var(--ease, ease); }
 .ct-ship { position: absolute; top: -13px; transform: translateX(-50%); font-size: 17px; animation: ctShip 3s ease-in-out infinite; }
 @keyframes ctShip { 0%, 100% { transform: translate(-50%, 0) rotate(-3deg); } 50% { transform: translate(-50%, 2px) rotate(3deg); } }
 .ct-card-eta { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
@@ -998,3 +998,14 @@ tr.ct-done { opacity: .6; }
 .ct-card-foot { display: flex; gap: 14px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
 @media (max-width: 900px) { .stats.ct-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ct-sea { height: 170px; } }
 @media (prefers-reduced-motion: reduce) { .ct-sea *, .ct-stat, .ct-ico, .ct-card, .ct-ship { animation: none !important; } .ct-ship-run { transform: translateX(520px); } }
+
+/* mapa plavby */
+.ct-mapbox #ctMap { height: 360px; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; z-index: 0; }
+.ct-mapbox .panel-h { flex-wrap: wrap; }
+.ct-pin { display: flex; align-items: center; gap: 5px; transform: translate(-6px, -6px); white-space: nowrap; }
+.ct-pin i { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 3px solid #16804a; box-shadow: 0 0 0 2px rgba(255,255,255,.7); flex: none; }
+.ct-pin.end i { border-color: #6b7280; }
+.ct-pin span { background: #fff; color: #111; font: 600 11px/1 system-ui, sans-serif; padding: 4px 7px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.ct-vessel { font-size: 24px; line-height: 30px; text-align: center; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); animation: ctVes 3s ease-in-out infinite; }
+@keyframes ctVes { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(2px) rotate(3deg); } }
+:root[data-theme="dark"] .ct-mapbox .leaflet-tile { filter: brightness(.72) contrast(1.05) saturate(.7); }

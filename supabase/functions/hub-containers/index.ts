@@ -100,30 +100,49 @@ async function trackOne(sb: any, key: string, c: any, force = false) {
   tr.available = pick(a, 'available_for_pickup'); tr.terminal = pick(a, 'location_at_pod_terminal');
   tr.debug = { container: Object.keys(a), shipment: Object.keys(s) };
 
-  // 3) události
+  // 3) události (jen skutečné, bez odhadů; místo, pokud ho Terminal49 vrátí)
   try {
-    const ev = await t49(key, 'GET', `/containers/${f.d.id}?include=transport_events`);
-    const list = (ev.json?.included || []).filter((x: any) => x.type === 'transport_event').map((x: any) => {
+    let ev = await t49(key, 'GET', `/containers/${f.d.id}?include=transport_events,transport_events.location`);
+    if (ev.status !== 200) ev = await t49(key, 'GET', `/containers/${f.d.id}?include=transport_events`);
+    const inc = ev.json?.included || [];
+    const place = (x: any) => { const r = x.relationships?.location?.data; const p = r && inc.find((y: any) => y.type === r.type && y.id === r.id); return p ? String(pick(p.attributes, 'name', 'nickname', 'port_name') || '') : ''; };
+    const list = inc.filter((x: any) => x.type === 'transport_event').map((x: any) => {
       const q = x.attributes || {};
-      return { e: String(pick(q, 'event', 'name') || ''), at: String(pick(q, 'timestamp', 'occurred_at', 'created_at') || ''), loc: String(pick(q, 'location_name', 'location', 'port_name') || ''), vessel: String(pick(q, 'vessel_name') || '') };
-    }).filter((x: any) => x.e).sort((p: any, q: any) => String(q.at).localeCompare(String(p.at))).slice(0, 15);
+      return { e: String(pick(q, 'event', 'name') || ''), at: String(pick(q, 'timestamp', 'occurred_at', 'created_at') || ''), loc: String(pick(q, 'location_name') || place(x) || ''), vessel: String(pick(q, 'vessel_name') || '') };
+    }).filter((x: any) => x.e && !x.e.includes('.estimated.')).sort((p: any, q: any) => String(q.at).localeCompare(String(p.at))).slice(0, 15);
     if (list.length) tr.events = list;
   } catch { /* události nejsou nutné */ }
 
-  // 4) poloha lodi (vyžaduje u Terminal49 licenci Routing Data)
+  // 4) poloha lodi a trasa (Routing Data)
   let lat: number | null = c.last_lat, lon: number | null = c.last_lon;
   if (tr.routing !== false || force) {
     try {
       const g = await t49(key, 'GET', `/containers/${f.d.id}/map_geojson`);
+      tr.routing_http = g.status;
       if (g.status === 200) {
-        const feat = (g.json?.features || []).find((x: any) => x?.properties?.feature_type === 'current_vessel');
+        const feats: any[] = g.json?.features || [];
+        const feat = feats.find((x: any) => x?.properties?.feature_type === 'current_vessel');
         if (feat?.geometry?.coordinates) {
           lon = Number(feat.geometry.coordinates[0]); lat = Number(feat.geometry.coordinates[1]);
           tr.position = { lat, lon, speed: feat.properties.vessel_location_speed ?? null, heading: feat.properties.vessel_location_heading ?? null, at: feat.properties.vessel_location_timestamp ?? null, vessel: feat.properties.vessel_name ?? null, voyage: feat.properties.voyage_number ?? null, eta: feat.properties.arrival_port_eta ?? null };
         } else { tr.position = null; }
-        tr.routing = true;
-      } else if (g.status === 401 || g.status === 402 || g.status === 403 || g.status === 404) { tr.routing = false; }
-    } catch { /* poloha není nutná */ }
+        // trasa pro mapku v aplikaci: řídké souřadnice, ať se vejdeme do databáze
+        const thin = (co: any[]): any[] => { const max = 300; if (!Array.isArray(co) || co.length <= max) return co; const step = Math.ceil(co.length / max); return co.filter((_: any, i: number) => i % step === 0 || i === co.length - 1); };
+        const slim = feats.map((x: any) => {
+          const gm = x.geometry; if (!gm) return null;
+          const geometry = gm.type === 'LineString' ? { ...gm, coordinates: thin(gm.coordinates) } : gm.type === 'MultiLineString' ? { ...gm, coordinates: gm.coordinates.map(thin) } : gm;
+          const p = x.properties || {};
+          return { type: 'Feature', geometry, properties: { feature_type: p.feature_type ?? null, name: p.name ?? p.port_name ?? p.location_name ?? null, status: p.status ?? p.route_status ?? p.state ?? null, locode: p.locode ?? null, vessel_name: p.vessel_name ?? null, ts: p.vessel_location_timestamp ?? null } };
+        }).filter(Boolean);
+        const mapJson = { type: 'FeatureCollection', features: slim };
+        if (slim.length && JSON.stringify(mapJson).length < 250000) tr.map = mapJson; else if (!slim.length) tr.map = null;
+        tr.map_types = [...new Set(feats.map((x: any) => x?.properties?.feature_type).filter(Boolean))];
+        tr.routing = true; tr.routing_msg = null;
+      } else {
+        tr.routing_msg = t49err(g).slice(0, 200);
+        if (g.status === 401 || g.status === 402 || g.status === 403) tr.routing = false;
+      }
+    } catch (e) { tr.routing_msg = (e as Error).message; }
   }
 
   // 5) přenos do polí kontejneru (jen to, co Terminal49 skutečně vrátil)
@@ -134,7 +153,8 @@ async function trackOne(sb: any, key: string, c: any, force = false) {
   setIf('etd', etd); setIf('eta', eta); setIf('ata', ata);
   setIf('vessel', pick(s, 'pod_vessel_name', 'pol_vessel_name', 'vessel_name'));
   setIf('imo', pick(s, 'pod_vessel_imo', 'pol_vessel_imo', 'vessel_imo'));
-  setIf('pol', pick(s, 'pol_name')); setIf('pod', pick(s, 'pod_name'));
+  setIf('pol', pick(s, 'port_of_lading_name', 'pol_name')); setIf('pod', pick(s, 'port_of_discharge_name', 'pod_name'));
+  tr.pol_locode = pick(s, 'port_of_lading_locode'); tr.pod_locode = pick(s, 'port_of_discharge_locode'); tr.voyage = pick(s, 'pod_voyage_number'); tr.eta_original = day(pick(s, 'pod_original_eta_at'));
   setIf('bl', pick(s, 'bill_of_lading_number', 'bl_number')); setIf('carrier', pick(s, 'shipping_line_name') ?? pick(a, 'shipping_line_name'));
   if (lat !== null && lon !== null && Number.isFinite(lat) && Number.isFinite(lon)) { upd.last_lat = lat; upd.last_lon = lon; }
   const derived = (ata || tr.arrived_at || tr.discharged_at) ? 'port' : (pick(s, 'pol_atd_at') || tr.position) ? 'sailing' : null;

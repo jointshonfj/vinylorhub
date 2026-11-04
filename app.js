@@ -2582,8 +2582,9 @@ const ctBadge = s => `<span class="st" data-s="${CT_ST[s][1]}">${CT_ST[s][0]}</s
 const ctEta = c => c.status === 'delivered' ? (c.delivered_at || c.ata) : (c.ata || c.eta);
 function trackLinks(c) {
   const out = [];
-  if (c.number) out.push(['🔎 Sledovat kontejner', `https://www.searates.com/container/tracking/?number=${encodeURIComponent(c.number)}`]);
-  if (c.imo) out.push(['🚢 Loď na mapě', `https://www.vesselfinder.com/vessels/details/${encodeURIComponent(c.imo)}`]);
+  const tid = c.tracking && c.tracking.t49_container_id;
+  if (tid) out.push(['🗺️ Otevřít v Terminal49', `https://app.terminal49.com/containers/${encodeURIComponent(tid)}`]);
+  else if (c.number) out.push(['🔎 Sledovat kontejner', `https://www.searates.com/container/tracking/?number=${encodeURIComponent(c.number)}`]);
   return out.map(([l, u]) => `<a class="btn sm" href="${u}" target="_blank" rel="noopener noreferrer">${l}</a>`).join(' ');
 }
 async function loadCt() {
@@ -2647,7 +2648,7 @@ function drawCt() {
       <div class="ct-card-top"><b class="ct-card-num">${highlight(c.number || 'bez čísla', CT.q)}</b>${ctBadge(c.status)}</div>
       <div class="ct-card-body">
         <div class="small muted">${esc(c.supplier) || 'dodavatel neuveden'}${c.carrier ? ' · ' + esc(c.carrier) : ''}${c.tracking && c.tracking.tr_id ? ' · 📡' : ''}</div>
-        <div class="ct-voy"><span class="ct-port">${esc(c.pol) || '?'}</span><div class="ct-track"><i style="width:${Math.round(pr * 100)}%"></i><span class="ct-ship" style="left:${Math.round(pr * 100)}%">${c.status === 'delivered' ? '✅' : c.status === 'port' ? '⚓' : '🚢'}</span></div><span class="ct-port r">${esc(c.pod) || '?'}</span></div>
+        <div class="ct-voy"><span class="ct-port">${esc(c.pol) || '?'}</span><div class="ct-lane"><i style="width:${Math.round(pr * 100)}%"></i><span class="ct-ship" style="left:${Math.round(pr * 100)}%">${c.status === 'delivered' ? '✅' : c.status === 'port' ? '⚓' : '🚢'}</span></div><span class="ct-port r">${esc(c.pod) || '?'}</span></div>
         <div class="ct-card-eta"><div><div class="small muted">${c.status === 'delivered' ? 'Doručeno' : c.ata ? 'Dorazil' : 'Příjezd'}</div><b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b></div>${c.status !== 'delivered' && d !== null ? `<span class="ct-count ${late ? 'late' : ''}">${late ? 'po termínu · ' : ''}${dayWords(d)}</span>` : ''}</div>
         <div class="ct-chips">${its.slice(0, 3).map(i => `<span>${esc((i.name || i.code).slice(0, 26))}</span>`).join('')}${its.length > 3 ? `<span class="more">+${its.length - 3}</span>` : ''}${!its.length ? '<span class="more">bez položek</span>' : ''}</div>
       </div>
@@ -2684,6 +2685,46 @@ async function ctOpenInvoice(inv) {
   } catch (e) { if (w) w.close(); toast('PDF se nepodařilo otevřít: ' + e.message, true); }
 }
 
+let leafletP = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (leafletP) return leafletP;
+  leafletP = new Promise((res, rej) => {
+    const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'vendor/leaflet.css?v=1.9.4'; document.head.appendChild(css);
+    const sc = document.createElement('script'); sc.src = 'vendor/leaflet.js?v=1.9.4'; sc.onload = () => res(window.L); sc.onerror = () => { leafletP = null; rej(new Error('Mapa se nenačetla')); };
+    document.head.appendChild(sc);
+  });
+  return leafletP;
+}
+// mapa plavby: trasa a poloha lodi z Terminal49 (map_geojson), případně aspoň loď + cílový přístav
+function ctHasMap(c) {
+  const t = c.tracking || {};
+  return !!((t.map && t.map.features && t.map.features.length) || t.position);
+}
+async function ctDrawMap(c) {
+  const el = $('#ctMap'); if (!el) return;
+  let L; try { L = await loadLeaflet(); } catch (e) { el.innerHTML = `<p class="muted small" style="padding:14px">${esc(e.message)}</p>`; return; }
+  if (CT.map) { try { CT.map.remove(); } catch {} CT.map = null; }
+  const t = c.tracking || {};
+  const map = L.map(el, { scrollWheelZoom: false, worldCopyJump: true }); CT.map = map;
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 9, attribution: '© OpenStreetMap' }).addTo(map);
+  const group = L.featureGroup().addTo(map);
+  const dot = (ll, label, cls) => L.marker(ll, { icon: L.divIcon({ className: '', html: `<div class="ct-pin ${cls}"><i></i>${label ? `<span>${esc(label)}</span>` : ''}</div>`, iconSize: [0, 0] }) });
+  const shipIcon = ll => L.marker(ll, { icon: L.divIcon({ className: '', html: '<div class="ct-vessel">🚢</div>', iconSize: [30, 30], iconAnchor: [15, 15] }), zIndexOffset: 800 });
+  const kind = f => String((f.properties && (f.properties.feature_type || '')) + ' ' + (f.properties && (f.properties.status || ''))).toLowerCase();
+  if (t.map && t.map.features && t.map.features.length) {
+    L.geoJSON(t.map, {
+      style: f => { const k = kind(f); const done = /done|complete|past|travel/.test(k); const prog = /progress|current|active/.test(k); return { color: done || prog ? '#16804a' : '#6b7280', weight: done ? 3 : 2.5, dashArray: done ? null : '6 6', opacity: .95 }; },
+      pointToLayer: (f, ll) => /vessel/.test(kind(f)) ? shipIcon(ll) : dot(ll, f.properties && f.properties.name, /pod|discharge|arriv|destin/.test(kind(f)) ? 'end' : 'start'),
+    }).addTo(group);
+  }
+  if (t.position && !(t.map && t.map.features.some(f => /vessel/.test(kind(f))))) shipIcon([t.position.lat, t.position.lon]).addTo(group);
+  const port = ctPort(c.pod);
+  if (port && !(t.map && t.map.features.length)) { dot([port.lat, port.lon], c.pod, 'end').addTo(group); if (t.position) L.polyline([[t.position.lat, t.position.lon], [port.lat, port.lon]], { color: '#6b7280', weight: 2.5, dashArray: '6 6' }).addTo(group); }
+  const b = group.getBounds();
+  if (b.isValid()) { b.getSouthWest().equals(b.getNorthEast()) ? map.setView(b.getCenter(), 5) : map.fitBounds(b.pad(0.15)); } else map.setView([30, 20], 2);
+  setTimeout(() => map.invalidateSize(), 150);
+}
 const CT_PORTS = [['hamburg', 53.54, 9.97], ['bremerhaven', 53.55, 8.55], ['bremen', 53.55, 8.55], ['wilhelmshaven', 53.52, 8.13], ['rotterdam', 51.95, 4.14], ['antwerp', 51.27, 4.35], ['antverpy', 51.27, 4.35], ['gdansk', 54.40, 18.67], ['gdynia', 54.53, 18.54], ['koper', 45.55, 13.73], ['trieste', 45.65, 13.76], ['rijeka', 45.32, 14.43], ['genoa', 44.41, 8.92], ['la spezia', 44.10, 9.83], ['le havre', 49.48, 0.11], ['felixstowe', 51.95, 1.32], ['barcelona', 41.35, 2.17], ['valencia', 39.44, -0.32], ['constanta', 44.17, 28.65], ['piraeus', 37.94, 23.63]];
 const ctPort = name => { const n = fold(name || ''); const p = CT_PORTS.find(x => n.includes(x[0])); return p ? { lat: p[1], lon: p[2] } : null; };
 const kmBetween = (a, b, c, d) => { const r = x => x * Math.PI / 180; const h = Math.sin(r(c - a) / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(r(d - b) / 2) ** 2; return Math.round(12742 * Math.asin(Math.sqrt(h))); };
@@ -2757,10 +2798,10 @@ async function renderContainer(id) {
     return `<div class="panel ct-sec"><div class="panel-h">📡 Sledování <span class="sub">Terminal49${c.tracked_at ? ' · aktualizováno ' + czDateTime(c.tracked_at) : ''}</span><span class="grow"></span><button class="btn sm" id="tkRefresh">↻ Obnovit teď</button></div>
       <div class="panel-b" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
         <div class="ct-kv"><span>Stav u Terminal49</span><b>${t.status && t.status !== 'created' ? (t.status === 'failed' ? 'sledování selhalo: ' + esc(t.failed_reason || '') : 'čekáme na data od rejdaře') : esc(CT_TSTATE[t.state] || t.state || 'sledováno')}</b></div>
-        ${t.terminal ? `<div class="ct-kv"><span>Terminál</span><b>${esc(t.terminal)}</b></div>` : ''}
+        ${t.terminal ? `<div class="ct-kv"><span>Terminál</span><b>${esc(t.terminal)}</b></div>` : ''}${t.voyage ? `<div class="ct-kv"><span>Plavba (voyage)</span><b>${esc(t.voyage)}</b></div>` : ''}${t.last_error ? `<div class="small warn-t" style="grid-column:1/-1">Poslední chyba: ${esc(t.last_error)}</div>` : ''}
         ${pos ? `<div class="ct-kv"><span>Poloha lodi${pos.at ? ' (' + czDateTime(pos.at) + ')' : ''}</span><b>${pos.lat.toFixed(2)}°, ${pos.lon.toFixed(2)}° <a href="https://www.openstreetmap.org/?mlat=${pos.lat}&mlon=${pos.lon}#map=5/${pos.lat}/${pos.lon}" target="_blank" rel="noopener noreferrer">mapa</a></b>${pos.speed != null ? `<small class="muted">rychlost ${esc(pos.speed)} uzlů</small>` : ''}</div>
           ${km != null ? `<div class="ct-kv"><span>Do ${esc(c.pod)}</span><b>asi ${km.toLocaleString('cs')} km</b><small class="muted">vzdušnou čarou</small></div>` : ''}`
-          : t.routing === false ? `<div class="small muted" style="grid-column:1/-1">Poloha lodi na mapě vyžaduje u Terminal49 doplňkovou licenci (Routing Data). Stav, loď a datum příjezdu se sledují i bez ní.</div>` : ''}
+          : t.routing === false ? `<div class="small muted" style="grid-column:1/-1">Poloha lodi na mapě vyžaduje u Terminal49 doplňkovou licenci (Routing Data). Stav, loď a datum příjezdu se sledují i bez ní.</div>` : t.routing_http && t.routing_http !== 200 ? `<div class="small muted" style="grid-column:1/-1">Mapu trasy se zatím nepodařilo načíst (Terminal49: ${esc(t.routing_http)}${t.routing_msg ? ' · ' + esc(t.routing_msg) : ''}).</div>` : ''}
       </div>
       ${ev.length ? `<div style="padding:0 16px 14px"><div class="small muted" style="margin-bottom:6px">Poslední události</div>${ev.map(e => `<div class="ct-ev"><span class="muted small nowrap">${e.at ? czDateTime(e.at) : ''}</span><span>${esc(String(e.e).replace(/^container\.transport\./, '').replace(/_/g, ' '))}${e.loc ? ' · ' + esc(e.loc) : ''}${e.vessel ? ' · ' + esc(e.vessel) : ''}</span></div>`).join('')}</div>` : ''}</div>`;
   }
@@ -2787,6 +2828,7 @@ async function renderContainer(id) {
   }
 
   // ---------- náhled ----------
+  const t0 = c => { const t = c.tracking || {}; return t.position && t.position.at ? 'poloha lodi ' + czDateTime(t.position.at) : ''; };
   function viewBody() {
     const c = cur(); const its = itemsOf(); const invs = invsOf();
     const open = its.filter(i => !lockedItem(i) && !i.custom);
@@ -2801,6 +2843,7 @@ async function renderContainer(id) {
         <div class="ct-big" style="margin-top:12px">${its.filter(i => i.stocked).length}<small> / ${its.filter(i => !i.custom).length} naskladněno</small></div></div>
     </div>
     ${trackPanel()}
+    ${ctHasMap(c) ? `<div class="panel ct-sec ct-mapbox"><div class="panel-h">🗺️ Mapa plavby<span class="sub">${t0(c)}</span><span class="grow"></span>${trackLinks(c)}</div><div id="ctMap"></div></div>` : ''}
     <div class="panel ct-sec"><div class="panel-h">Obsah kontejneru</div><div style="overflow-x:auto"><table class="list"><thead><tr><th>Kód</th><th>Produkt</th><th class="r">Objednáno</th><th class="r">Dorazilo</th><th>Příjem</th><th></th></tr></thead><tbody>
       ${its.map(i => `<tr><td class="nowrap"><b>${esc(i.code) || '—'}</b></td><td>${esc(i.name)}${i.custom ? ' <span class="tag">mimo Shoptet</span>' : ''}${i.note ? `<div class="small muted">${esc(i.note)}</div>` : ''}${!i.custom && (i.ean || i.mpn) ? `<div class="small muted">${[i.ean && 'EAN ' + esc(i.ean), i.mpn && 'MPN ' + esc(i.mpn)].filter(Boolean).join(' · ')}</div>` : ''}${i.recv_note ? `<div class="small warn-t">↳ ${esc(i.recv_note)}</div>` : ''}</td>
         <td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td><td class="r nowrap">${i.got == null ? '<span class="muted">—</span>' : `<b ${toNum(i.got) !== toNum(i.qty) ? 'class="warn-t"' : ''}>${fmtQ(i.got)} ${esc(i.unit)}</b>`}</td><td>${recvBadge(i.recv_state)}</td>
@@ -2872,6 +2915,7 @@ async function renderContainer(id) {
     const b = $('#cBody');
     $$('[data-pdf]', b).forEach(a => a.onclick = e => { e.preventDefault(); const v = CT.inv.find(x => x.id === a.dataset.pdf); if (v) ctOpenInvoice(v); });
     const r2 = $('#cRecv2'); if (r2) r2.onclick = () => $('#cRecv').click();
+    if (mode === 'view' && $('#ctMap')) ctDrawMap(cur());
     const tk1 = $('#tkStart'); if (tk1) tk1.onclick = () => trackNow(tk1);
     const tk2 = $('#tkRefresh'); if (tk2) tk2.onclick = () => trackNow(tk2, { force: true });
     if (mode === 'recv') return bindRecv(b);
