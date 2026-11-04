@@ -189,7 +189,7 @@ function popMenu(anchor, items) {
 
 // ---------- data ----------
 const fromRow = r => ({
-  id: r.id, number: r.number, status: r.status, statusAt: r.status_at, date: r.date, validUntil: r.valid_until,
+  id: r.id, archived: !!r.archived, archivedAt: r.archived_at || null, number: r.number, status: r.status, statusAt: r.status_at, date: r.date, validUntil: r.valid_until,
   customer: { ...emptyCustomer(), ...(r.customer || {}) }, recipient: r.recipient || '', items: r.items || [],
   note: r.note || '', terms: r.terms || '', shoptetOrder: r.shoptet_order || '', net: Number(r.net), total: Number(r.total),
   createdBy: r.created_by, issuedBy: r.issued_by, lastEditBy: r.last_edit_by, version: r.version,
@@ -456,7 +456,7 @@ async function renderMfa() {
 }
 
 // ---------- přehled nabídek ----------
-const OFFER_LIST_COLS = 'id,number,status,status_at,date,valid_until,customer,created_by,issued_by,updated_at,created_at,note,shoptet_order,net,total,version,offer_comments(count)';
+const OFFER_LIST_COLS = 'id,archived,archived_at,number,status,status_at,date,valid_until,customer,created_by,issued_by,updated_at,created_at,note,shoptet_order,net,total,version,offer_comments(count)';
 async function refreshOffers(silent) {
   const rows = await fetchAll(() => sb.from('offers').select(OFFER_LIST_COLS).eq('deleted', false).order('created_at', { ascending: false }));
   S.offers = rows.map(fromRow);
@@ -475,6 +475,7 @@ function filteredOffers() {
   const q = fold(S.q).trim();
   return S.offers.filter(o => {
     if (S.who && o.issuedBy !== S.who && o.createdBy !== S.who) return false;
+    if (S.view === 'archive' ? !o.archived : o.archived) return false;
     if (S.view === 'list' && S.fStatus && o.status !== S.fStatus) return false;
     if (!q) return true;
     const c = o.customer;
@@ -489,28 +490,42 @@ async function newOffer(copyFrom = null) {
 function drawOffers() {
   const main = $('#main');
   main.innerHTML = `
-  <div class="topbar">
-    <h1>Nabídky</h1>
-    <button class="btn primary" id="newOffer" title="Nová nabídka (N)">＋ Nová nabídka</button>
-    <div class="search grow" style="max-width:380px"><span class="ic">⌕</span><input id="q" placeholder="Hledat číslo, zákazníka, IČO, telefon…" value="${esc(S.q)}"><span class="hint-k"><kbd>/</kbd></span></div>
-    <select id="who" style="width:auto">
-      <option value="">Všichni</option>
-      ${S.users.map(u => `<option value="${u.id}" ${S.who === u.id ? 'selected' : ''}>${u.id === S.me.id ? 'Moje' : esc(u.name)}</option>`).join('')}
-    </select>
-    <div class="seg"><button data-v="board" class="${S.view === 'board' ? 'on' : ''}">Nástěnka</button><button data-v="list" class="${S.view === 'list' ? 'on' : ''}">Seznam</button></div>
-  </div>
+  <div class="of-page">
+  <header class="of-bar">
+    <div class="of-title"><h1>Nabídky</h1><span class="of-sub" id="ofSub"></span></div>
+    <div class="of-tools">
+      <div class="search of-search"><span class="ic">⌕</span><input id="q" placeholder="Hledat číslo, zákazníka, IČO, telefon…" value="${esc(S.q)}"><span class="hint-k"><kbd>/</kbd></span></div>
+      <select id="who" class="of-who">
+        <option value="">Všichni</option>
+        ${S.users.map(u => `<option value="${u.id}" ${S.who === u.id ? 'selected' : ''}>${u.id === S.me.id ? 'Moje' : esc(u.name)}</option>`).join('')}
+      </select>
+      <div class="seg of-seg"><i class="seg-thumb"></i><button data-v="board" class="${S.view === 'board' ? 'on' : ''}">Nástěnka</button><button data-v="list" class="${S.view === 'list' ? 'on' : ''}">Seznam</button><button data-v="archive" class="${S.view === 'archive' ? 'on' : ''}">📦 Archiv <span class="muted">${S.offers.filter(o => o.archived).length}</span></button></div>
+      <button class="btn primary of-new" id="newOffer" title="Nová nabídka (N)">＋ Nová nabídka</button>
+    </div>
+  </header>
   <div id="stats"></div>
-  <div id="ov"></div>`;
+  <div id="ov" class="enter-once"></div>
+  </div>`;
   main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter');
   $('#newOffer').onclick = async e => { const b = e.currentTarget; b.disabled = true; b.innerHTML = '<span class="spin"></span> Zakládám…'; try { await newOffer(); } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = '＋ Nová nabídka'; } };
   $('#q').oninput = e => { S.q = e.target.value; drawOffersBody(); };
   $('#who').onchange = e => { S.who = e.target.value; drawStats(); drawOffersBody(); };
-  $$('.seg button', main).forEach(b => b.onclick = () => { S.view = b.dataset.v; ls.set('vh_view', S.view); drawOffersBody(); $$('.seg button', main).forEach(x => x.classList.toggle('on', x === b)); });
+  const placeThumb = () => { const seg = $('.of-seg', main), on = $('.seg button.on', main), th = $('.seg-thumb', main); if (!seg || !on || !th) return; th.style.width = on.offsetWidth + 'px'; th.style.transform = `translateX(${on.offsetLeft}px)`; };
+  $$('.seg button', main).forEach(b => b.onclick = () => { S.view = b.dataset.v; if (S.view !== 'archive') ls.set('vh_view', S.view); drawOffersBody(); $$('.seg button', main).forEach(x => x.classList.toggle('on', x === b)); placeThumb(); });
+  requestAnimationFrame(placeThumb); setTimeout(placeThumb, 250);
+  setTimeout(() => $('#ov') && $('#ov').classList.remove('enter-once'), 1200);
   drawStats(); drawOffersBody();
+}
+function hello() {
+  const h = new Date().getHours();
+  const part = h < 5 ? 'Dobrou noc' : h < 10 ? 'Dobré ráno' : h < 12 ? 'Dobré dopoledne' : h < 18 ? 'Dobré odpoledne' : 'Dobrý večer';
+  return `${part}, ${esc(String(S.me.name || '').split(' ')[0] || 'tým')}`;
 }
 function drawStats() {
   const el = $('#stats'); if (!el) return;
-  const list = S.who ? S.offers.filter(o => o.issuedBy === S.who || o.createdBy === S.who) : S.offers;
+  // archivované nabídky se do statistik nepočítají
+  const base = S.offers.filter(o => !o.archived);
+  const list = S.who ? base.filter(o => o.issuedBy === S.who || o.createdBy === S.who) : base;
   const open = list.filter(o => o.status === 'sent' || o.status === 'postponed');
   const month = new Date().toISOString().slice(0, 7);
   const won = list.filter(o => o.status === 'confirmed' && String(o.statusAt).slice(0, 7) === month);
@@ -518,13 +533,36 @@ function drawStats() {
   const rate = decided.length ? Math.round(100 * decided.filter(o => o.status === 'confirmed').length / decided.length) : null;
   const late = open.filter(o => (o.status === 'sent' && daysSince(o.statusAt) >= 5) || (o.status === 'postponed' && daysSince(o.statusAt) >= 7));
   const sum = a => a.reduce((x, o) => x + o.total, 0);
-  el.innerHTML = `<div class="stats">
-    <div class="panel stat" style="--c:var(--s-sent)"><div class="k">Rozjednané nabídky</div><div class="v" data-n="${sum(open)}">0 Kč</div><div class="s">${open.length} × odeslaná nebo odložená</div></div>
-    <div class="panel stat" style="--c:var(--s-confirmed)"><div class="k">Potvrzeno tento měsíc</div><div class="v" data-n="${sum(won)}">0 Kč</div><div class="s">${won.length} nabídek překlopeno do Shoptetu</div></div>
-    <div class="panel stat" style="--c:var(--brand)"><div class="k">Úspěšnost</div><div class="v">${rate == null ? '—' : rate + ' %'}</div><div class="s">z rozhodnutých nabídek</div></div>
-    <div class="panel stat" style="--c:var(--s-postponed)"><div class="k">Ozvat se zákazníkovi</div><div class="v">${late.length}</div><div class="s">${late.length ? 'nabídky čekají příliš dlouho ⏰' : 'vše v pořádku ✓'}</div></div>
-  </div>`;
+  const cnt = st => list.filter(o => o.status === st).length;
+  const total = list.length || 1;
+  const COL = { draft: 'var(--s-draft)', sent: 'var(--s-sent)', postponed: 'var(--s-postponed)', confirmed: 'var(--s-confirmed)', rejected: 'var(--s-rejected)' };
+  const R = 34, C = 2 * Math.PI * R;
+  const sub = $('#ofSub'); if (sub) sub.textContent = `${list.length} ${list.length === 1 ? 'nabídka' : list.length < 5 ? 'nabídky' : 'nabídek'} na nástěnce${S.offers.some(o => o.archived) ? ` · ${S.offers.filter(o => o.archived).length} v archivu` : ''}`;
+  const first = !el.dataset.done; el.dataset.done = '1';
+  el.innerHTML = `<section class="of-hero ${first ? 'first' : 'go'}">
+    <div class="of-aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="of-hero-in">
+      <div class="of-hello">${hello()}</div>
+      <div class="of-big"><span class="of-amt" data-n="${sum(open)}">0 Kč</span></div>
+      <div class="of-bigsub">${open.length ? `rozjednáno v ${open.length} ${open.length === 1 ? 'nabídce' : open.length < 5 ? 'nabídkách' : 'nabídkách'} čekajících na zákazníka` : 'právě nic nečeká na zákazníka'}</div>
+      <div class="of-funnel" role="img" aria-label="Poměr nabídek podle stavu">${STATUS_ORDER.map(st => cnt(st) ? `<i style="--w:${(100 * cnt(st) / total).toFixed(2)}%;--c:${COL[st]}" title="${esc(STATUSES[st])}: ${cnt(st)}"></i>` : '').join('')}</div>
+      <div class="of-legend">${STATUS_ORDER.map(st => `<span><b style="background:${COL[st]}"></b>${esc(STATUSES[st])} <em>${cnt(st)}</em></span>`).join('')}</div>
+    </div>
+    <div class="of-widgets">
+      <div class="of-w" style="--c:var(--s-confirmed);--i:0">
+        <div class="of-ring"><svg viewBox="0 0 84 84" aria-hidden="true"><circle class="bg" cx="42" cy="42" r="${R}"/><circle class="fg" cx="42" cy="42" r="${R}" stroke-dasharray="${C.toFixed(1)}" style="--full:${C.toFixed(1)};--to:${(C * (1 - (rate || 0) / 100)).toFixed(1)}"/></svg><b>${rate == null ? '—' : rate + '<small>%</small>'}</b></div>
+        <div class="of-wt"><div class="of-wk">Úspěšnost</div><div class="of-ws">z ${decided.length} rozhodnutých nabídek</div></div>
+      </div>
+      <div class="of-w" style="--c:var(--s-confirmed);--i:1">
+        <div class="of-wt"><div class="of-wk">Potvrzeno tento měsíc</div><div class="of-wv" data-n="${sum(won)}">0 Kč</div><div class="of-ws">🛒 ${won.length} ${won.length === 1 ? 'nabídka překlopena' : won.length < 5 ? 'nabídky překlopeny' : 'nabídek překlopeno'} do Shoptetu</div></div>
+      </div>
+      <div class="of-w ${late.length ? 'warn' : ''}" style="--c:var(--s-postponed);--i:2">
+        <div class="of-wt"><div class="of-wk">Ozvat se zákazníkovi</div><div class="of-wv">${late.length}${late.length ? ' <span class="of-bell">🔔</span>' : ''}</div>
+          <div class="of-ws">${late.length ? late.slice(0, 2).map(o => `${esc(custLabel(o.customer))} · ${daysSince(o.statusAt)} d`).join('<br>') : 'vše v pořádku ✓'}</div></div>
+      </div>
+    </div></section>`;
   $$('[data-n]', el).forEach(v => tween(v, Number(v.dataset.n), n => M(n).replace(/,\d\d$/, '') + ' Kč'));
+  if (first) requestAnimationFrame(() => requestAnimationFrame(() => el.querySelector('.of-hero')?.classList.add('go')));
 }
 async function changeStatus(o, status) {
   const args = { p_id: o.id, p_status: status, p_shoptet_order: null };
@@ -555,18 +593,27 @@ function drawOffersBody(movedId) {
     return;
   }
   if (S.view === 'list') return drawList(ov, list);
+  if (S.view === 'archive') return drawArchive(ov, list);
   ov.innerHTML = `<div class="board">${STATUS_ORDER.map(s => {
     const cards = list.filter(o => o.status === s).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const sum = cards.reduce((a, o) => a + o.total, 0);
     return `<section class="col" data-s="${s}" data-drop="${s}">
-      <div class="col-h">${esc(STATUSES[s])} <span class="cnt">${cards.length}</span><span class="sum">${cards.length ? M(sum).replace(/,\d\d$/, '') + ' Kč' : ''}</span></div>
-      ${cards.map((o, i) => card(o, i, o.id === movedId)).join('') || `<div class="empty">${esc(STATUS_HINT[s])}</div>`}
+      <div class="col-h">${esc(STATUSES[s])} <span class="cnt">${cards.length}</span>${cards.length && (s === 'confirmed' || s === 'rejected') ? `<button class="colarch" data-arch="${s}" title="Archivovat všechny nabídky v tomto sloupci">📦</button>` : ''}<span class="sum">${cards.length ? M(sum).replace(/,\d\d$/, '') + ' Kč' : ''}</span></div>
+      <div class="col-body">${cards.map((o, i) => card(o, i, o.id === movedId)).join('') || `<div class="empty">${esc(STATUS_HINT[s])}</div>`}</div>
+      ${cards.length > 6 ? `<div class="col-more">↓ dalších ${cards.length - 6} — posuň v sloupci, starší dej do archivu 📦</div>` : ''}
     </section>`;
   }).join('')}</div>`;
   $$('.card', ov).forEach(c => {
     c.onclick = e => { if (e.target.closest('.stbtn')) return; location.hash = '#/o/' + c.dataset.id; };
     c.ondragstart = e => { e.dataTransfer.setData('text/plain', c.dataset.id); e.dataTransfer.effectAllowed = 'move'; requestAnimationFrame(() => c.classList.add('dragging')); };
     c.ondragend = () => c.classList.remove('dragging');
+  });
+  limitCols(ov);
+  $$('.archbtn', ov).forEach(b => b.onclick = e => { e.stopPropagation(); archiveOffers([b.closest('.card').dataset.id], true); });
+  $$('.colarch', ov).forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const ids = list.filter(o => o.status === b.dataset.arch).map(o => o.id);
+    if (ids.length && await confirmBox('Archivovat nabídky?', `${ids.length} nabídek ve sloupci „${STATUSES[b.dataset.arch]}“ se přesune do archivu. Nic se nemaže, v Archivu je najdeš a můžeš vrátit.`, { ok: 'Archivovat' })) archiveOffers(ids, true);
   });
   $$('.stbtn', ov).forEach(b => b.onclick = async e => {
     e.stopPropagation();
@@ -585,6 +632,44 @@ function drawOffersBody(movedId) {
     };
   });
 }
+// sloupec ukáže nejvýš 6 karet, ostatní se rolují uvnitř sloupce
+function limitCols(root) {
+  $$('.col-body', root).forEach(b => {
+    b.style.maxHeight = ''; b.classList.remove('scroll');
+    const cards = [...b.querySelectorAll('.card')];
+    if (cards.length <= 6) return;
+    b.style.maxHeight = (cards[6].offsetTop - cards[0].offsetTop) + 'px'; b.classList.add('scroll');
+  });
+}
+let limitT = null;
+window.addEventListener('resize', () => { clearTimeout(limitT); limitT = setTimeout(() => { const ov = $('#ov'); if (ov && $('.board', ov)) limitCols(ov); }, 150); });
+async function archiveOffers(ids, flag) {
+  try {
+    const at = flag ? new Date().toISOString() : null;
+    check(await sb.from('offers').update({ archived: flag, archived_at: at }).in('id', ids));
+    S.offers.forEach(o => { if (ids.includes(o.id)) { o.archived = flag; o.archivedAt = at; } });
+    drawOffersBody();
+    const seg = $('.seg button[data-v="archive"]'); if (seg) seg.innerHTML = `📦 Archiv <span class="muted">${S.offers.filter(o => o.archived).length}</span>`;
+    { const on = $('.of-seg button.on'), th = $('.of-seg .seg-thumb'); if (on && th) { th.style.width = on.offsetWidth + 'px'; th.style.transform = `translateX(${on.offsetLeft}px)`; } }
+    drawStats();
+    toast(flag ? `Do archivu: ${ids.length} ${ids.length === 1 ? 'nabídka' : ids.length < 5 ? 'nabídky' : 'nabídek'}` : 'Vráceno z archivu', { action: { label: 'Vrátit', fn: () => archiveOffers(ids, !flag) } });
+  } catch (err) { toast(err.message, true); }
+}
+function drawArchive(ov, list) {
+  const rows = list.slice().sort((a, b) => String(b.archivedAt || '').localeCompare(String(a.archivedAt || '')));
+  ov.innerHTML = `<p class="muted small" style="margin:0 0 10px">Archivované nabídky se nezobrazují na nástěnce ani v seznamu. Hledání nahoře funguje i tady.</p>
+  <div class="panel" style="overflow-x:auto"><table class="list">
+    <thead><tr><th>Číslo</th><th>Zákazník</th><th>Stav</th><th>Datum</th><th>Archivováno</th><th>Vystavil</th><th class="r">S DPH</th><th></th></tr></thead>
+    <tbody>${rows.map(o => `<tr class="click" data-id="${o.id}">
+      <td class="nowrap num-t"><b>${esc(o.number)}</b></td>
+      <td>${highlight(custLabel(o.customer), S.q)}<div class="muted small">${esc([o.customer.email, o.customer.phone].filter(Boolean).join(' · '))}</div></td>
+      <td>${stat(o.status)}${o.shoptetOrder ? `<div class="muted small">🛒 ${esc(o.shoptetOrder)}</div>` : ''}</td>
+      <td class="nowrap">${czDate(o.date)}</td><td class="nowrap">${o.archivedAt ? czDate(String(o.archivedAt).slice(0, 10)) : '—'}</td>
+      <td class="nowrap">${esc(userName(o.issuedBy))}</td><td class="r nowrap num-t"><b>${M(o.total)}</b></td>
+      <td><button class="btn sm" data-un="${o.id}">↩ Vrátit</button></td></tr>`).join('') || `<tr><td colspan="8" class="empty">${S.q ? 'Nic nenalezeno' : 'Archiv je prázdný. Nabídku archivuješ tlačítkem 📦 na kartě.'}</td></tr>`}</tbody></table></div>`;
+  $$('tr.click', ov).forEach(r => r.onclick = e => { if (e.target.closest('[data-un]')) return; location.hash = '#/o/' + r.dataset.id; });
+  $$('[data-un]', ov).forEach(b => b.onclick = e => { e.stopPropagation(); archiveOffers([b.dataset.un], false); });
+}
 function card(o, i, moved) {
   const d = daysSince(o.statusAt);
   const late = (o.status === 'sent' && d >= 5) || (o.status === 'postponed' && d >= 7);
@@ -597,6 +682,7 @@ function card(o, i, moved) {
       ${o.commentCount ? `<span title="Interní komentáře">💬 ${o.commentCount}</span>` : ''}
       ${late ? `<span class="late" title="Ve stavu už ${d} dní — ozvat se zákazníkovi?">⏰ ${d} d</span>` : ''}
       ${o.shoptetOrder ? `<span title="Objednávka v Shoptetu">🛒 ${esc(o.shoptetOrder)}</span>` : ''}
+      <button class="archbtn" title="Archivovat">📦</button>
       <button class="st stbtn" data-s="${o.status}" title="Změnit stav">Stav ▾</button>
       <span class="price">${M(o.total)} Kč</span>
     </div>
@@ -665,6 +751,7 @@ async function renderEditor(id) {
     <span id="stBadge">${stat(o.status)}</span>
     <span class="save" id="saveState">Uloženo</span>
     <span class="grow"></span>
+    <button class="btn" id="arch" title="Přesunout do archivu (zmizí z nástěnky)">📦 <span class="hide-xs">${o.archived ? 'Vrátit z archivu' : 'Archivovat'}</span></button>
     <button class="btn" id="dup" title="Vytvořit kopii nabídky">⧉ <span class="hide-xs">Duplikovat</span></button>
     <button class="btn ghost danger" id="del" title="Smazat nabídku">🗑</button>
   </div></div>
@@ -1143,7 +1230,15 @@ async function renderEditor(id) {
     ls.set('vh_sh_order', JSON.stringify({ pay: res.paymentGuid, ship: res.shippingGuid, status: res.statusId }));
     btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Zakládám objednávku…';
     try {
-      const r = await shoptetCall({ action: 'order_create', offerId: o.id, ...res });
+      let r = await shoptetCall({ action: 'order_create', offerId: o.id, ...res });
+      if (!r.ok && r.stockShort) {
+        const go = await modal({ title: 'Není dost zboží skladem',
+          body: `<p>Shoptet objednávku nepustil, protože na skladě není dostatečné množství:</p><ul class="problems">${r.problems.map(x => `<li>${esc(x)}</li>`).join('')}</ul><p><b>Chceš objednávku založit i tak?</b> Objednávka vznikne a zboží se ze skladu <b>stáhne do mínusu</b>. Dej pozor, ať je pak vše včas naskladněno.</p>`,
+          actions: [{ label: 'Zrušit', value: false }, { label: 'Založit i tak (sklad do mínusu)', value: true, cls: 'danger' }] });
+        if (!go) { drawToShoptet(); return; }
+        btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Zakládám objednávku…';
+        r = await shoptetCall({ action: 'order_create', offerId: o.id, ...res, allowNegative: true });
+      }
       if (!r.ok) {
         await modal({ title: 'Objednávku se nepodařilo založit', body: `<ul class="problems">${r.problems.map(x => `<li>${esc(x)}</li>`).join('')}</ul><p class="muted small">Nic se ve Shoptetu nevytvořilo. Oprav údaje v nabídce a zkus to znovu.</p>`, actions: [{ label: 'Rozumím', value: null, cls: 'primary' }] });
         drawToShoptet(); return;
@@ -1155,7 +1250,7 @@ async function renderEditor(id) {
       const fresh = check(await sb.from('offers').select('version').eq('id', o.id).single()); o.version = fresh.version;
       history = check(await sb.from('offer_history').select('*').eq('offer_id', o.id).order('at')); drawHistory(); drawToShoptet();
       const link = r.adminUrl ? `<p><a class="btn" href="${esc(r.adminUrl)}" target="_blank" rel="noopener">Otevřít objednávku ve Shoptetu ↗</a></p>` : '';
-      await modal({ title: `Objednávka ${r.code} založena ✓`, body: `<p>Celkem s DPH: <b>${M(r.offerTotal)} Kč</b> v nabídce · <b>${r.shoptetTotal == null ? '—' : M(r.shoptetTotal) + ' Kč'}</b> ve Shoptetu${r.toPay != null ? ` (k úhradě ${esc(String(r.toPay))} Kč)` : ''}.</p>${link}
+      await modal({ title: `Objednávka ${r.code} založena ✓`, body: `${r.negative ? '<p class="warn-t">⚠ Zboží se ze skladu stáhlo do mínusu (potvrzeno).</p>' : ''}<p>Celkem s DPH: <b>${M(r.offerTotal)} Kč</b> v nabídce · <b>${r.shoptetTotal == null ? '—' : M(r.shoptetTotal) + ' Kč'}</b> ve Shoptetu${r.toPay != null ? ` (k úhradě ${esc(String(r.toPay))} Kč)` : ''}.</p>${link}
         ${r.warnings?.length ? `<ul class="problems">${r.warnings.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`, actions: [{ label: 'Hotovo', value: null, cls: 'primary' }] });
     } catch (err) { toast(err.message, true); drawToShoptet(); }
   }
@@ -1200,6 +1295,16 @@ async function renderEditor(id) {
     }).join('');
   }
 
+  $('#arch').onclick = async e => {
+    const b = e.currentTarget; b.disabled = true;
+    try {
+      const flag = !o.archived;
+      const r = check(await sb.from('offers').update({ archived: flag, archived_at: flag ? new Date().toISOString() : null }).eq('id', o.id).select('version').single());
+      o.archived = flag; o.version = r.version;
+      b.innerHTML = `📦 <span class="hide-xs">${flag ? 'Vrátit z archivu' : 'Archivovat'}</span>`; toast(flag ? 'Nabídka je v archivu' : 'Vráceno z archivu');
+    } catch (err) { toast(err.message, true); }
+    b.disabled = false;
+  };
   $('#dup').onclick = async e => {
     const b = e.currentTarget; busy(b, true, 'Kopíruji…');
     await save();

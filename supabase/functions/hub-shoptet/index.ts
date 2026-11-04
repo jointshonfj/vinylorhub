@@ -6,7 +6,7 @@
 //   { action: 'order_options' }                            → způsoby platby a dopravy, stavy objednávek (pro dialog překlopení)
 //   { action: 'oj_sync' }                                  → OrderJoi: načte objednávky ve stavu „Potřeba objednat“
 //   { action: 'svoz_stock_in', shipmentId, stockId }       → OrderJoi: svoz dorazil → naskladnění všech řádků
-//   { action: 'order_create', offerId, paymentGuid, shippingGuid, shippingPriceVat, statusId, sendEmail }  → nabídka → objednávka
+//   { action: 'order_create', offerId, paymentGuid, shippingGuid, shippingPriceVat, statusId, sendEmail, allowNegative? }  → nabídka → objednávka (allowNegative: založit i při nedostatku na skladě, sklad se stáhne do mínusu)
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const CORS = {
@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
       // interní poznámka v objednávce (zákazník ji nevidí): odkud objednávka vznikla a z jaké nabídky
       const { data: people } = await sb.from('hub_profiles').select('id, name').in('id', [offer.issued_by, u.user.id].filter(Boolean));
       const nameOf = (id: string) => (people || []).find((x: { id: string }) => x.id === id)?.name || '';
-      const remark = `Vytvořeno z nabídky č. ${offer.number} ve Vinylor Hubu` + (nameOf(offer.issued_by) ? ` · vystavil(a): ${nameOf(offer.issued_by)}` : '') + (nameOf(u.user.id) ? ` · překlopil(a): ${nameOf(u.user.id)}` : '') + ` · ${new Date().toLocaleDateString('cs-CZ', { timeZone: 'Europe/Prague' })}`;
+      const remark = `Vytvořeno z nabídky č. ${offer.number} ve Vinylor Hubu` + (b.allowNegative === true ? ' · sklad stažen do mínusu (potvrzeno)' : '') + (nameOf(offer.issued_by) ? ` · vystavil(a): ${nameOf(offer.issued_by)}` : '') + (nameOf(u.user.id) ? ` · překlopil(a): ${nameOf(u.user.id)}` : '') + ` · ${new Date().toLocaleDateString('cs-CZ', { timeZone: 'Europe/Prague' })}`;
 
       const payload = {
         data: {
@@ -206,24 +206,44 @@ Deno.serve(async (req) => {
           ],
         },
       };
-      const q = b.sendEmail ? '' : '?suppressEmailSending=true';
+      // nedostatek na skladě: Shoptet objednávku nepustí, pokud produkt nesmí do mínusu. S potvrzením uživatele ji založíme bez automatického stažení ze skladu
+      // (suppressStockMovements) a sklad pak stáhneme sami zvlášť, aby šlo případně zjistit, co se povedlo.
+      const allowNeg = b.allowNegative === true;
+      const qp = [b.sendEmail ? '' : 'suppressEmailSending=true', allowNeg ? 'suppressStockMovements=true' : ''].filter(Boolean);
+      const q = qp.length ? '?' + qp.join('&') : '';
       let r;
       try { r = await call('POST', '/orders' + q, payload); } catch (e) { r = { status: 0, json: null, text: (e as Error).message }; }
       const order = r.json?.data?.order;
       if (!order?.code) {
         if (r.status !== 0) await sb.from('shoptet_order_log').delete().eq('offer_id', offerId); // jednoznačné selhání → jde zkusit znovu
-        return json({ ok: false, problems: [r.status === 0 ? 'Spojení se Shoptetem se přerušilo. Než to zkusíš znovu, zkontroluj ve Shoptetu, zda objednávka nevznikla, a napiš správci.' : 'Shoptet objednávku odmítl: ' + errText(r)] });
+        const msg = r.status === 0 ? 'Spojení se Shoptetem se přerušilo. Než to zkusíš znovu, zkontroluj ve Shoptetu, zda objednávka nevznikla, a napiš správci.' : 'Shoptet objednávku odmítl: ' + errText(r);
+        const stockShort = r.status !== 0 && !allowNeg && /sklad|zásob|zasob|stock|inventor|dostupn|available|množstv|mnozstv|amount|quantity/i.test(errText(r));
+        await audit('shoptet_order_rejected', { offer: offer.number, status: r.status, error: errText(r).slice(0, 400), stockShort });
+        return json({ ok: false, stockShort, problems: [msg] });
+      }
+      const negMoves: { code: string; ok: boolean; message?: string }[] = [];
+      if (allowNeg) {
+        // sklad stáhneme položku po položce (relativní změna), případné chyby půjdou do upozornění
+        for (const i of items) {
+          const code = String(i.code).trim().slice(0, 64);
+          let mv;
+          try { mv = await call('PATCH', `/stocks/${stockId}/movements`, { data: [{ productCode: code, amountChange: -Number(i.qty) }] }); } catch (e) { mv = { status: 0, json: null, text: (e as Error).message }; }
+          const bad = mv.status !== 200 || (mv.json?.errors && mv.json.errors.length);
+          negMoves.push({ code, ok: !bad, message: bad ? (mv.status === 0 ? 'spojení se přerušilo' : errText(mv)) : undefined });
+          await sleep(250);
+        }
+        for (const m of negMoves.filter(x => !x.ok)) warnings.push(`Sklad u ${m.code} se nepodařilo stáhnout (${m.message}). Objednávka je založená — stáhni zboží ručně ve Shoptetu.`);
       }
       const shoptetTotal = Number(order.price?.withVat ?? NaN);
       await sb.from('shoptet_order_log').update({ order_code: order.code, total_shoptet: Number.isFinite(shoptetTotal) ? shoptetTotal : null }).eq('offer_id', offerId);
       // nabídka → stav „Překlopena do Shoptetu“ + číslo objednávky + historie
       await sb.from('offers').update({ status: 'confirmed', status_at: new Date().toISOString(), shoptet_order: String(order.code) }).eq('id', offerId);
       await sb.from('offer_history').insert({ offer_id: offerId, author: u.user.id, action: 'status', from_status: offer.status, to_status: 'confirmed', note: 'objednávka ' + order.code });
-      await audit('shoptet_order_create', { offer: offer.number, order: order.code, offerTotal, shoptetTotal: Number.isFinite(shoptetTotal) ? shoptetTotal : null });
+      await audit('shoptet_order_create', { offer: offer.number, order: order.code, offerTotal, shoptetTotal: Number.isFinite(shoptetTotal) ? shoptetTotal : null, negativeStock: allowNeg, movesFailed: negMoves.filter(x => !x.ok).length });
       const diff = Number.isFinite(shoptetTotal) ? r2(shoptetTotal - offerTotal) : null;
       if (diff !== null && Math.abs(diff) > 0.05) warnings.push(`Celkem v nabídce je ${offerTotal.toFixed(2)} Kč, ve Shoptetu ${shoptetTotal.toFixed(2)} Kč (rozdíl ${diff.toFixed(2)} Kč). Zkontroluj objednávku.`);
       const adminUrl = typeof order.adminUrl === 'string' && order.adminUrl.startsWith('https://www.vinylor.cz/admin/') ? order.adminUrl : null;
-      return json({ ok: true, code: order.code, adminUrl, offerTotal, offerNet, shoptetTotal: Number.isFinite(shoptetTotal) ? shoptetTotal : null, toPay: order.price?.toPay ?? null, warnings });
+      return json({ ok: true, negative: allowNeg, code: order.code, adminUrl, offerTotal, offerNet, shoptetTotal: Number.isFinite(shoptetTotal) ? shoptetTotal : null, toPay: order.price?.toPay ?? null, warnings });
     }
     // ---- OrderJoi: objednávky ve stavu „Potřeba objednat“ → položky k objednání ----
     if (b.action === 'oj_sync') {
