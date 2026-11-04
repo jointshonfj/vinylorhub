@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.20.0';
+export const APP_VERSION = '0.20.1';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.20.1', d: '2026-11-04', t: ['Nabídky: kompaktnější přehled nahoře, nabídky na nástěnce jsou výš a méně se scrolluje'] },
   { v: '0.20.0', d: '2026-11-04', t: ['Nabídky: nový vzhled podle zásad Apple (velký nadpis, skleněná lišta, hero s přehledem rozjednaných nabídek a poměrem stavů, widgety s kroužkem úspěšnosti, segmentový přepínač s pohyblivým jezdcem, hlubší karty s pružným pohybem)', 'Archivované nabídky se nepočítají do statistik', 'Systémové písmo (SF na Apple zařízeních), plynulejší tlačítka a zvýrazněný fokus'] },
   { v: '0.19.0', d: '2026-11-04', t: ['Nabídky: archiv (tlačítko 📦 na kartě, v editoru a „Archivovat vše“ u sloupců Překlopena / Zamítnuta; záložka Archiv, nabídku jde vrátit)', 'Nástěnka: sloupec ukáže nejvýš 6 karet, další se rolují uvnitř sloupce'] },
   { v: '0.18.0', d: '2026-11-04', t: ['Nabídky → Shoptet: když na skladě není dost zboží, systém na to upozorní a po potvrzení objednávku i tak založí a sklad stáhne do mínusu'] },
