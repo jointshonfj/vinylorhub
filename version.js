@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.17.0';
+export const APP_VERSION = '0.17.1';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.17.1', d: '2026-11-04', t: ['Kontejnery: oprava načítání mapy plavby u kontejnerů, které už Terminal49 sledoval (tlačítko „Obnovit teď“ se zobrazí vždy a při každém obnovení se zkusí načíst trasa)'] },
   { v: '0.17.0', d: '2026-11-04', t: ['Kontejnery: mapa plavby přímo v detailu (trasa a poloha lodi z Terminal49), odkaz „Otevřít v Terminal49“ místo cizích webů', 'Oprava vzhledu panelu sledování, přístavy (odkud → kam) a události se berou ze správných polí Terminal49'] },
   { v: '0.16.0', d: '2026-11-03', t: ['Kontejnery: nový přehled v přístavním stylu — animované moře s plující lodí plnou kontejnerů, stavové karty s počítadly, kontejnery jako karty s „plavbou“ (loď na trase podle ETD/ETA) a odpočtem, přepínač Karty / Tabulka'] },
   { v: '0.15.0', d: '2026-11-03', t: ['Kontejnery: sledování v reálném čase přes Terminal49 (stav, loď, ETA, události, poloha lodi a vzdálenost do přístavu), tlačítko „Spustit sledování“ a automatická obnova každé 3 hodiny'] },

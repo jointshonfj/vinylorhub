@@ -79,7 +79,7 @@ async function trackOne(sb: any, key: string, c: any, force = false) {
       else return { ok: false, message: 'Sledování se nepodařilo založit: ' + t49err(cr) };
       await sleep(1500); f = await findC();
       if (f.err) return { ok: false, message: f.err };
-    } else if (tr.tr_id && tr.tr_id !== 'dup') {
+    } else if (tr.tr_id && tr.tr_id !== 'dup' && tr.tr_id !== 'existing') {
       const st = await t49(key, 'GET', `/tracking_requests/${tr.tr_id}`);
       const a = st.json?.data?.attributes;
       if (a) { tr.status = a.status; tr.failed_reason = a.failed_reason ?? null; }
@@ -96,6 +96,7 @@ async function trackOne(sb: any, key: string, c: any, force = false) {
   const sh = (f.included || []).find((x: any) => x.type === 'shipment' && (!shipId || x.id === shipId));
   const s = sh?.attributes || {};
   tr.t49_container_id = f.d.id; tr.shipment_id = sh?.id ?? shipId ?? null; tr.status = 'created';
+  tr.tr_id = tr.tr_id || 'existing';
   tr.state = pick(a, 'current_status') ; tr.arrived_at = pick(a, 'pod_arrived_at'); tr.discharged_at = pick(a, 'pod_discharged_at');
   tr.available = pick(a, 'available_for_pickup'); tr.terminal = pick(a, 'location_at_pod_terminal');
   tr.debug = { container: Object.keys(a), shipment: Object.keys(s) };
@@ -115,7 +116,7 @@ async function trackOne(sb: any, key: string, c: any, force = false) {
 
   // 4) poloha lodi a trasa (Routing Data)
   let lat: number | null = c.last_lat, lon: number | null = c.last_lon;
-  if (tr.routing !== false || force) {
+  {
     try {
       const g = await t49(key, 'GET', `/containers/${f.d.id}/map_geojson`);
       tr.routing_http = g.status;

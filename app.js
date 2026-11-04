@@ -2790,7 +2790,7 @@ async function renderContainer(id) {
 
   // ---------- sledování (Terminal49) ----------
   function trackPanel() {
-    const c = cur(); const t = c.tracking || {}; const on = !!t.tr_id;
+    const c = cur(); const t = c.tracking || {}; const on = !!(t.tr_id || t.t49_container_id);
     if (!on) return c.status === 'delivered' ? '' : `<div class="panel panel-b ct-sec ct-track"><div style="flex:1;min-width:220px"><b>📡 Sledování v reálném čase</b><div class="small muted">Napojení na Terminal49: stav, loď, ETA a (s doplňkovou licencí) poloha lodi. Po zapnutí se obnovuje samo zhruba každé 3 hodiny.</div></div><button class="btn primary" id="tkStart">Spustit sledování</button></div>`;
     const pos = t.position; const port = ctPort(c.pod);
     const km = pos && port ? kmBetween(pos.lat, pos.lon, port.lat, port.lon) : null;
@@ -2808,7 +2808,7 @@ async function renderContainer(id) {
   async function trackNow(btn, extra = {}) {
     const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Načítám…';
     try {
-      const r = await ctCall({ action: 'ct_track', containerId: id, force: !!extra.force, scac: extra.scac });
+      const r = await ctCall({ action: 'ct_track', containerId: id, force: true, scac: extra.scac });
       if (r.needScac) {
         btn.disabled = false; btn.innerHTML = old;
         const v = await modal({ title: 'Který je to rejdař?', focus: '[data-sc]',
