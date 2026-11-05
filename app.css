@@ -1142,3 +1142,6 @@ body, button, input, select, textarea { font-family: var(--sf); }
 .of-bell { font-size: 14px; }
 @media (max-width: 1100px) { .of-hero { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .of-hero { padding: 12px 14px; } .of-legend { display: none; } }
+
+.ct-beta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin: 0 0 12px; padding: 9px 14px; border-radius: 14px; font-size: 13px; color: var(--ink-2); background: color-mix(in srgb, var(--s-postponed) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--s-postponed) 30%, var(--line)); }
+.ct-beta span { font-weight: 700; color: var(--ink); }

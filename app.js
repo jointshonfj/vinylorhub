@@ -2709,7 +2709,7 @@ async function renderCt() {
   shell('ct', `<div class="topbar"><h1>Kontejnery</h1></div><div class="panel panel-b"><div class="sk" style="height:220px"></div></div>`);
   try { await Promise.all([loadCt(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
   $('#main').innerHTML = `<div class="topbar"><h1>Kontejnery</h1><div class="search grow" style="max-width:520px"><span class="ic">⌕</span><input id="ctq" placeholder="Hledat kontejner, B/L, číslo faktury, dodavatele — nebo produkt: „Carrara click 6mm“…" value="${esc(CT.q)}"></div><button class="btn primary" id="ctNew">＋ Nový kontejner</button></div>
-  <div id="ctHero"></div><div id="ctStats"></div><div class="chips" id="ctF" style="margin-bottom:12px"></div><div id="ctRes"></div><div id="ctList"></div>`;
+  <div class="ct-beta"><span>🧪 Testovací verze</span> Kontejnery zatím zkoušíme. Údaje a sledování se ještě ladí, proto s nimi zacházej opatrně a chyby hlas Filipovi.</div><div id="ctHero"></div><div id="ctStats"></div><div class="chips" id="ctF" style="margin-bottom:12px"></div><div id="ctRes"></div><div id="ctList"></div>`;
   $('#ctNew').onclick = async e => { const b = e.currentTarget; b.disabled = true; try { const r = check(await sb.from('ct_containers').insert({ created_by: S.me.id }).select('id').single()); CT.fresh = r.id; location.hash = '#/k/' + r.id; } catch (er) { toast(er.message, true); b.disabled = false; } };
   $('#ctq').oninput = e => { CT.q = e.target.value; drawCt(); };
   drawCt();
