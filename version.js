@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.21.0';
+export const APP_VERSION = '0.22.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.22.0', d: '2026-11-10', t: ['OrderJoi: nástěnka objednávek jako v Trellu — sloupce Reklamace / Objednat / Čeká na AUF / Bez svozu / Na cestě / Doručeno, karty se přetahují myší nebo přes „⋯“, posun jde vrátit; ručně posunutá objednávka se sama vrátí k datům, jakmile se skutečný stav změní', 'Přepínač Nástěnka / Seznam, hledání a filtr dodavatele i na nástěnce'] },
   { v: '0.21.0', d: '2026-11-10', t: ['OrderJoi: e-mail dodavateli používá kód dodavatele (MPN), nikdy náš interní; chybějící kód a anglický název se doplní před e-mailem a uloží k produktu', 'E-mail: tlačítka Gmail a Outlook vedle „Otevřít v e-mailu“, hlídá chybějící kód a příjemce', 'AUF: tlačítka „Označit jako odesláno“ a „Zrušit potvrzení“, štítek „čeká N dní“, „e-mail neodeslán“', 'Hledání a filtry: dodavatel u objednávek, AUFy (hledání + stav), Produkty (bez dodavatele / chybí MPN / chybí EN název)'] },
   { v: '0.20.2', d: '2026-11-05', t: ['Kontejnery odemčeny pro všechny uživatele, nahoře štítek „Testovací verze“'] },
   { v: '0.20.1', d: '2026-11-04', t: ['Nabídky: kompaktnější přehled nahoře, nabídky na nástěnce jsou výš a méně se scrolluje'] },

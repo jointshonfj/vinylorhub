@@ -2159,6 +2159,7 @@ async function renderReceipt(id) {
 // stejný postup a pojmy jako ve SmartJoi: objednávky · AUFy · svozy · produkty · dodavatelé
 // =====================================================================
 const OJ = { orders: [], items: [], aufs: [], products: {}, suppliers: [], shipments: [], tab: 'objednavky', filter: 'active', card: '', q: '', syncing: false, sup: '', aq: '', af: '', pf: '' };
+OJ.view = ls.get('vh_oj_view') === 'list' ? 'list' : 'board';
 OJ.tab = ({ objednavky: 1, aufy: 1, svozy: 1, produkty: 1, dodavatele: 1 })[ls.get('vh_oj_tab')] ? ls.get('vh_oj_tab') : 'objednavky';
 const OJ_SHIP = { transit: ['Na cestě', 'postponed'], arrived: ['Doručeno', 'confirmed'], stocked: ['Naskladněno', 'confirmed'] };
 const OJ_AUF = { draft: ['Koncept', 'draft'], sent: ['Čeká na AUF', 'sent'], confirmed: ['AUF potvrzena', 'confirmed'] };
@@ -2233,8 +2234,10 @@ function ojInfo(o) {
   else if (aufs.some(a => !a.shipment_id)) stage = 'nosvoz';
   else if (aufs.some(a => !a.delivered_at)) stage = 'transit';
   else stage = 'delivered';
+  // ruční posun na nástěnce platí, dokud se skutečný stav objednávky nezmění (pak se řídí zase daty)
+  const auto = stage; const manual = !!(o.board_stage && o.board_from === auto && OJ_STAGE[o.board_stage]); if (manual) stage = o.board_stage;
   const sups = [...new Set(orderable.map(i => (OJ.products[i.code] || {}).supplier_id).filter(Boolean))].map(ojSup).filter(Boolean);
-  return { o, items, orderable, todo, aufs, stage, sups };
+  return { o, items, orderable, todo, aufs, stage, sups, auto, manual };
 }
 const ojBucket = inf => inf.o.archived ? 'archive' : ['delivered', 'none'].includes(inf.stage) ? 'done' : 'active';
 
@@ -2271,19 +2274,21 @@ function waitTag(i) {
 }
 function dashes(stage) { const n = OJ_STAGE[stage][2]; return `<span class="dashes ${stage}">${[1, 2, 3, 4].map(i => `<i class="${i <= n ? 'on' : ''}"></i>`).join('')}</span>`; }
 function drawOjOrders(infos) {
-  const el = $('#ojBody'); const act = infos.filter(i => ojBucket(i) === 'active');
+  const el = $('#ojBody'); const board = OJ.view === 'board'; const act = infos.filter(i => ojBucket(i) === 'active');
   const cnt = k => act.filter(i => i.stage === k).length;
   const cards = [['issue', '⚠', 'Reklamace', cnt('issue'), 'var(--s-rejected)'], ['order', '🛒', 'Objednat', cnt('order'), 'var(--s-postponed)'], ['auf', '✉', 'Čeká na AUF', cnt('auf'), 'var(--s-sent)'],
     ['nosvoz', '📋', 'Bez svozu', cnt('nosvoz'), 'var(--brand)'], ['transit', '🚚', 'Na cestě', cnt('transit'), 'var(--s-sent)'], ['delivered', '✓', 'Doručeno', infos.filter(i => i.stage === 'delivered' && !i.o.archived).length, 'var(--s-confirmed)']];
   const bucketCnt = b => infos.filter(i => ojBucket(i) === b).length;
   const q = fold(OJ.q).trim();
   let list = infos.filter(i => {
-    if (OJ.card) { if (OJ.card === 'delivered' ? !(i.stage === 'delivered' && !i.o.archived) : !(ojBucket(i) === 'active' && i.stage === OJ.card)) return false; }
+    if (board) { if (i.o.archived || i.stage === 'none') return false; }
+    else if (OJ.card) { if (OJ.card === 'delivered' ? !(i.stage === 'delivered' && !i.o.archived) : !(ojBucket(i) === 'active' && i.stage === OJ.card)) return false; }
     else if (ojBucket(i) !== OJ.filter) return false;
     if (OJ.sup && !i.items.some(x => (OJ.products[x.code] || {}).supplier_id === OJ.sup)) return false;
     if (!q) return true;
     return fold([i.o.code, i.o.customer, i.o.note, ...i.aufs.map(a => a.auf_number + ' ' + a.order_code), ...i.sups.map(x => x.name), ...i.items.map(x => x.code + ' ' + x.name + ' ' + ((OJ.products[x.code] || {}).supplier_code || ''))].join(' ')).includes(q);
   });
+  if (board) return drawOjBoard(el, list);
   const waiting = OJ.shipments.filter(x => x.status === 'arrived' && x.lines.some(l => !l.stocked && !l.skip));
   el.innerHTML = `
   ${waiting.map(x => `<a class="panel panel-b oj-banner" href="#/svoz/${x.id}"><span style="font-size:22px">📥</span><div class="grow"><b>Svoz ${esc(x.reference || x.title)} dorazil a čeká na naskladnění</b><div class="muted small">${x.lines.filter(l => !l.stocked && !l.skip).length} řádků · otevři svoz a klikni na „Naskladnit vše do Shoptetu“</div></div><span class="btn primary">Otevřít svoz ›</span></a>`).join('')}
@@ -2291,7 +2296,7 @@ function drawOjOrders(infos) {
   <div class="topbar" style="margin:6px 0 12px;gap:10px"><div class="search grow" style="max-width:520px"><span class="ic">⌕</span><input id="ojq" placeholder="Hledat objednávku, AUF, zákazníka, položku…" value="${esc(OJ.q)}"></div>
     <div class="chips" id="ojF">${[['active', 'Aktivní'], ['done', 'Vyřízené'], ['archive', 'Archiv']].map(([k, l]) => `<button class="chip ${!OJ.card && OJ.filter === k ? 'on' : ''}" data-f="${k}">${l} <span class="tag grey">${bucketCnt(k)}</span></button>`).join('')}</div>
     <select id="ojSupF" class="of-who" title="Filtrovat podle dodavatele">${supOptions(OJ.sup, 'Všichni dodavatelé')}</select>
-    <span class="grow"></span><button class="btn" id="ojManual">＋ Ruční objednávka</button></div>
+    ${ojViewSeg()}<span class="grow"></span><button class="btn" id="ojManual">＋ Ruční objednávka</button></div>
   ${OJ.card ? `<p class="muted small" style="margin:-4px 0 10px">Filtr: <b>${OJ_STAGE[OJ.card][0]}</b> · <a href="#" id="ojClr">zrušit</a></p>` : ''}
   <div class="panel" id="ojOrdList">${list.length ? list.map(i => {
     const [lbl, st] = OJ_STAGE[i.stage]; const sup = i.sups.map(s => ojSupLabel(s)).join(' · ');
@@ -2302,14 +2307,93 @@ function drawOjOrders(infos) {
   $$('#ojF .chip', el).forEach(b => b.onclick = () => { OJ.card = ''; OJ.filter = b.dataset.f; drawOj(); });
   $('#ojq').oninput = e => { OJ.q = e.target.value; const p = e.target.selectionStart; drawOj(); const n = $('#ojq'); n.focus(); n.setSelectionRange(p, p); };
   $('#ojSupF').onchange = e => { OJ.sup = e.target.value; drawOj(); };
+  ojBindView();
   const clr = $('#ojClr'); if (clr) clr.onclick = e => { e.preventDefault(); OJ.card = ''; drawOj(); };
-  $('#ojManual').onclick = async () => {
+  $('#ojManual').onclick = ojManualOrder;
+  async function ojManualOrder_unused() {
     const v = await modal({ title: 'Ruční objednávka', body: `<p class="muted small">Pro objednávku, která není ve Shoptetu ve stavu „Potřeba objednat“ (SK e-shop, zakázka pro zákazníka, sklad…).</p><label>Číslo / označení objednávky</label><input data-k="code" placeholder="např. 2202600174 nebo Sklad-11"><label>Poznámka</label><input data-k="note">`, focus: '[data-k="code"]',
       actions: [{ label: 'Zrušit', value: null }, { label: 'Založit', cls: 'primary', value: bd => ({ code: $('[data-k="code"]', bd).value.trim(), note: $('[data-k="note"]', bd).value.trim() }) }] });
     if (!v || !v.code) return;
     try { check(await sb.from('oj_orders').insert({ code: v.code, note: v.note, manual: true, order_date: ymd(new Date()), active: true })); location.hash = orderHref(v.code); }
     catch (e) { toast(/duplicate|unique/i.test(e.message) ? 'Objednávka s tímto číslem už existuje.' : e.message, true); }
-  };
+  }
+}
+async function ojManualOrder() {
+  const v = await modal({ title: 'Ruční objednávka', body: `<p class="muted small">Pro objednávku, která není ve Shoptetu ve stavu „Potřeba objednat“ (SK e-shop, zakázka pro zákazníka, sklad…).</p><label>Číslo / označení objednávky</label><input data-k="code" placeholder="např. 2202600174 nebo Sklad-11"><label>Poznámka</label><input data-k="note">`, focus: '[data-k="code"]',
+    actions: [{ label: 'Zrušit', value: null }, { label: 'Založit', cls: 'primary', value: bd => ({ code: $('[data-k="code"]', bd).value.trim(), note: $('[data-k="note"]', bd).value.trim() }) }] });
+  if (!v || !v.code) return;
+  try { check(await sb.from('oj_orders').insert({ code: v.code, note: v.note, manual: true, order_date: ymd(new Date()), active: true })); location.hash = orderHref(v.code); }
+  catch (e) { toast(/duplicate|unique/i.test(e.message) ? 'Objednávka s tímto číslem už existuje.' : e.message, true); }
+}
+
+// =====================================================================
+// NÁSTĚNKA OBJEDNÁVEK (jako Trello): sloupce = fáze, karty se přetahují myší nebo přes „⋯“
+// =====================================================================
+const OJ_COLS = ['issue', 'order', 'auf', 'nosvoz', 'transit', 'delivered'];
+const OJ_COL_COLOR = { rejected: 'var(--s-rejected)', postponed: 'var(--s-postponed)', sent: 'var(--s-sent)', confirmed: 'var(--s-confirmed)', draft: 'var(--muted)' };
+const ojViewSeg = () => `<div class="seg" id="ojV"><button data-v="board" class="${OJ.view === 'board' ? 'on' : ''}">Nástěnka</button><button data-v="list" class="${OJ.view === 'list' ? 'on' : ''}">Seznam</button></div>`;
+function ojBindView() { $$('#ojV button').forEach(b => b.onclick = () => { OJ.view = b.dataset.v; ls.set('vh_oj_view', OJ.view); drawOj(); }); }
+function ojCard(i) {
+  const o = i.o; const sup = i.sups.map(ojSupLabel).join(' · ');
+  const its = i.orderable.slice(0, 3).map(x => `${esc(x.code)} · ${fmtQ(x.qty)} ${esc(unitCz(x.unit))}`).join('<br>') + (i.orderable.length > 3 ? `<br>+ ${i.orderable.length - 3} dalších` : '');
+  return `<article class="card ojc" draggable="true" data-code="${esc(o.code)}">
+    <div class="t"><span class="no">${highlight(o.code, OJ.q)}</span><span>${o.order_date ? czDate(String(o.order_date).slice(0, 10)) : ''}</span></div>
+    ${o.customer ? `<div class="cu">${esc(o.customer)}</div>` : ''}
+    <div class="nt">${its || '<span class="muted">žádné položky k objednání</span>'}</div>
+    <div class="b">${sup ? `<span>${sup}</span>` : '<span class="tag">bez dodavatele</span>'}${o.manual ? '<span class="tag grey">ruční</span>' : ''}${i.aufs.some(a => a.status === 'draft') ? '<span class="tag">e-mail neodeslán</span>' : ''}${waitTag(i).trim()}${i.manual ? '<span class="tag blue" title="Posunuto ručně — když se objednávka posune sama (AUF, svoz…), řídí se zase daty">ručně</span>' : ''}
+      <span class="ojbtns"><button class="archbtn ojmv" title="Přesunout do jiného sloupce">⋯</button>${i.stage === 'delivered' ? '<button class="archbtn ojar" title="Archivovat">📦</button>' : ''}</span></div></article>`;
+}
+function drawOjBoard(el, list) {
+  const waiting = OJ.shipments.filter(x => x.status === 'arrived' && x.lines.some(l => !l.stocked && !l.skip));
+  el.innerHTML = `${waiting.map(x => `<a class="panel panel-b oj-banner" href="#/svoz/${x.id}"><span style="font-size:22px">📥</span><div class="grow"><b>Svoz ${esc(x.reference || x.title)} dorazil a čeká na naskladnění</b><div class="muted small">${x.lines.filter(l => !l.stocked && !l.skip).length} řádků · otevři svoz a klikni na „Naskladnit vše do Shoptetu“</div></div><span class="btn primary">Otevřít svoz ›</span></a>`).join('')}
+  <div class="topbar" style="margin:0 0 12px;gap:10px"><div class="search grow" style="max-width:520px"><span class="ic">⌕</span><input id="ojq" placeholder="Hledat objednávku, AUF, zákazníka, položku, kód dodavatele…" value="${esc(OJ.q)}"></div>
+    <select id="ojSupF" class="of-who" title="Filtrovat podle dodavatele">${supOptions(OJ.sup, 'Všichni dodavatelé')}</select>
+    ${ojViewSeg()}<span class="grow"></span><button class="btn" id="ojManual">＋ Ruční objednávka</button></div>
+  <div class="board oj-board">${OJ_COLS.map(st => {
+    const cards = list.filter(i => i.stage === st).sort((a, b) => String(b.o.order_date).localeCompare(String(a.o.order_date)) || b.o.code.localeCompare(a.o.code));
+    const [lbl, sc] = OJ_STAGE[st];
+    return `<section class="col" data-drop="${st}" style="--c:${OJ_COL_COLOR[sc]}"><div class="col-h">${lbl} <span class="cnt">${cards.length}</span></div>
+      <div class="col-body">${cards.map(ojCard).join('') || '<div class="empty">Přetáhni sem kartu</div>'}</div>
+      ${cards.length > 6 ? `<div class="col-more">↓ dalších ${cards.length - 6} — posuň v sloupci</div>` : ''}</section>`;
+  }).join('')}</div>
+  <p class="muted small" style="margin-top:8px">Kartu přetáhni do jiného sloupce, nebo použij „⋯“. Ručně posunutá objednávka se sama vrátí k datům, jakmile se skutečný stav změní. Objednávky bez položek k objednání a archivované jsou v „Seznam“.</p>`;
+  $('#ojq').oninput = e => { OJ.q = e.target.value; const p = e.target.selectionStart; drawOj(); const n = $('#ojq'); n.focus(); n.setSelectionRange(p, p); };
+  $('#ojSupF').onchange = e => { OJ.sup = e.target.value; drawOj(); };
+  $('#ojManual').onclick = ojManualOrder; ojBindView();
+  $$('.ojc', el).forEach(c => {
+    c.onclick = e => { if (e.target.closest('.archbtn')) return; location.hash = orderHref(c.dataset.code); };
+    c.ondragstart = e => { e.dataTransfer.setData('text/plain', c.dataset.code); e.dataTransfer.effectAllowed = 'move'; requestAnimationFrame(() => c.classList.add('dragging')); };
+    c.ondragend = () => c.classList.remove('dragging');
+  });
+  limitCols(el);
+  $$('.ojmv', el).forEach(b => b.onclick = async e => {
+    e.stopPropagation(); const code = b.closest('.ojc').dataset.code; const inf = ojInfo(OJ.orders.find(x => x.code === code));
+    const v = await popMenu(b, [...OJ_COLS.filter(c => c !== inf.stage).map(c => ({ label: '→ ' + OJ_STAGE[c][0], value: c, s: OJ_STAGE[c][1] })), ...(inf.manual ? [{ label: '↺ Vrátit automatický stav', value: '__auto' }] : [])]);
+    if (v) ojMove(code, v);
+  });
+  $$('.ojar', el).forEach(b => b.onclick = async e => {
+    e.stopPropagation(); const code = b.closest('.ojc').dataset.code;
+    try { check(await sb.from('oj_orders').update({ archived: true, updated_at: nowIso() }).eq('code', code)); OJ.orders.find(x => x.code === code).archived = true; drawOj(); toast('Objednávka je v archivu (najdeš ji v „Seznam → Archiv“)'); } catch (er) { toast(er.message, true); }
+  });
+  $$('.col', el).forEach(col => {
+    let depth = 0;
+    col.ondragenter = e => { e.preventDefault(); depth++; col.classList.add('over'); };
+    col.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; };
+    col.ondragleave = () => { if (--depth <= 0) { depth = 0; col.classList.remove('over'); } };
+    col.ondrop = e => { e.preventDefault(); depth = 0; col.classList.remove('over'); ojMove(e.dataTransfer.getData('text/plain'), col.dataset.drop); };
+  });
+}
+async function ojMove(code, target) {
+  const o = OJ.orders.find(x => x.code === code); if (!o) return;
+  const inf = ojInfo(o);
+  if (target === '__auto' ? !inf.manual : inf.stage === target) return;
+  const prev = { board_stage: o.board_stage || null, board_from: o.board_from || null };
+  const f = target === '__auto' || target === inf.auto ? { board_stage: null, board_from: null } : { board_stage: target, board_from: inf.auto };
+  const save = async v => { check(await sb.from('oj_orders').update({ ...v, updated_at: nowIso() }).eq('code', code)); Object.assign(o, v); drawOj(); };
+  try {
+    await save(f);
+    toast(`${code} → ${OJ_STAGE[ojInfo(o).stage][0]}`, { action: { label: 'Vrátit', fn: () => save(prev).catch(er => toast(er.message, true)) } });
+  } catch (e) { toast(e.message, true); }
 }
 
 // ---------- doplnění kódu dodavatele (MPN) a anglického názvu před e-mailem ----------

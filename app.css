@@ -1149,3 +1149,12 @@ body, button, input, select, textarea { font-family: var(--sf); }
 /* OrderJoi: štítek zpoždění, výplň údajů */
 .tag.late { background: color-mix(in srgb, var(--s-rejected) 16%, transparent); color: var(--s-rejected); }
 .oj-row .tag { margin-left: 6px; }
+
+/* OrderJoi nástěnka */
+.board.oj-board { grid-template-columns: repeat(6, minmax(215px, 1fr)); }
+.oj-board .col-h { text-transform: none; }
+.oj-board .card .ojbtns { margin-left: auto; display: inline-flex; gap: 2px; }
+.oj-board .card .archbtn { opacity: .55; font-size: 14px; padding: 0 4px; }
+.oj-board .card:hover .archbtn { opacity: 1; }
+.oj-board .col .empty { text-align: center; color: var(--muted); font-size: 12px; padding: 18px 6px; }
+.oj-board .card .nt { -webkit-line-clamp: 4; }
