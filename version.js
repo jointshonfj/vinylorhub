@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.20.2';
+export const APP_VERSION = '0.21.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.21.0', d: '2026-11-10', t: ['OrderJoi: e-mail dodavateli používá kód dodavatele (MPN), nikdy náš interní; chybějící kód a anglický název se doplní před e-mailem a uloží k produktu', 'E-mail: tlačítka Gmail a Outlook vedle „Otevřít v e-mailu“, hlídá chybějící kód a příjemce', 'AUF: tlačítka „Označit jako odesláno“ a „Zrušit potvrzení“, štítek „čeká N dní“, „e-mail neodeslán“', 'Hledání a filtry: dodavatel u objednávek, AUFy (hledání + stav), Produkty (bez dodavatele / chybí MPN / chybí EN název)'] },
   { v: '0.20.2', d: '2026-11-05', t: ['Kontejnery odemčeny pro všechny uživatele, nahoře štítek „Testovací verze“'] },
   { v: '0.20.1', d: '2026-11-04', t: ['Nabídky: kompaktnější přehled nahoře, nabídky na nástěnce jsou výš a méně se scrolluje'] },
   { v: '0.20.0', d: '2026-11-04', t: ['Nabídky: nový vzhled podle zásad Apple (velký nadpis, skleněná lišta, hero s přehledem rozjednaných nabídek a poměrem stavů, widgety s kroužkem úspěšnosti, segmentový přepínač s pohyblivým jezdcem, hlubší karty s pružným pohybem)', 'Archivované nabídky se nepočítají do statistik', 'Systémové písmo (SF na Apple zařízeních), plynulejší tlačítka a zvýrazněný fokus'] },
