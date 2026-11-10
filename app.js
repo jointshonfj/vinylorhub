@@ -2159,6 +2159,7 @@ async function renderReceipt(id) {
 // stejný postup a pojmy jako ve SmartJoi: objednávky · AUFy · svozy · produkty · dodavatelé
 // =====================================================================
 const OJ = { orders: [], items: [], aufs: [], products: {}, suppliers: [], shipments: [], tab: 'objednavky', filter: 'active', card: '', q: '', syncing: false, sup: '', aq: '', af: '', pf: '' };
+OJ.fillSkip = new Set();
 OJ.view = ls.get('vh_oj_view') === 'list' ? 'list' : 'board';
 OJ.tab = ({ objednavky: 1, aufy: 1, svozy: 1, produkty: 1, dodavatele: 1 })[ls.get('vh_oj_tab')] ? ls.get('vh_oj_tab') : 'objednavky';
 const OJ_SHIP = { transit: ['Na cestě', 'postponed'], arrived: ['Doručeno', 'confirmed'], stocked: ['Naskladněno', 'confirmed'] };
@@ -2401,16 +2402,17 @@ async function ojMove(code, target) {
 async function ojFillMissing(items, sup) {
   const cz = sup.country === 'CZ'; let warn = false;
   for (;;) {
-    const miss = items.filter(i => { const pr = OJ.products[i.code] || {}; return !pr.supplier_code || (!cz && !pr.supplier_name); });
+    const miss = cz ? [] : items.filter(i => { const pr = OJ.products[i.code] || {}; return !pr.supplier_name && !OJ.fillSkip.has(i.code); });
     if (!miss.length) return true;
     const v = await modal({ title: 'Doplň údaje pro dodavatele',
-      body: `<p class="muted small">Dodavatel <b>${esc(sup.name)}</b> nezná naše kódy. V e-mailu musí být <b>jeho kód (MPN)</b>${cz ? '' : ' a <b>anglický název</b>'}. Doplním je k produktu, příště už se ptát nebudu.</p>${warn ? '<p class="warn-t">⚠ Vyplň všechna pole, jinak e-mail nepůjde odeslat správně.</p>' : ''}
+      body: `<p class="muted small">Dodavateli <b>${esc(sup.name)}</b> pošleme <b>anglický název</b> produktu — dodavatel z něj pozná, co objednáváme. Kód dodavatele (MPN) je <b>nepovinný</b>; naše vlastní kódy se do e-mailu nikdy nedávají. Co doplníš, uloží se k produktu a příště se ptát nebudu.</p>
       <div style="max-height:52vh;overflow:auto">${miss.map(i => { const pr = OJ.products[i.code] || {}; return `<div class="fillrow" data-c="${esc(i.code)}" style="margin:10px 0;padding:10px;border:1px solid var(--line);border-radius:12px">
         <div><b>${esc(i.code)}</b> <span class="muted small">${esc(i.name)}</span></div>
-        <label>Kód u dodavatele (MPN)</label><input data-k="supplier_code" value="${esc(pr.supplier_code || (/^[A-Z]\d{2}[0-9A-Z]{9}$/.test(i.code) ? i.code : ''))}" placeholder="kód, který používá ${esc(sup.name)}">
-        ${cz ? '' : `<label>Anglický název</label><input data-k="supplier_name" value="${esc(pr.supplier_name || '')}" placeholder="např. Decking board WPC dark brown, 3.6 m">`}</div>`; }).join('')}</div>`,
-      actions: [{ label: 'Zrušit', value: null }, { label: 'Uložit a pokračovat', cls: 'primary', value: bd => $$('.fillrow', bd).map(r => ({ code: r.dataset.c, supplier_code: $('[data-k="supplier_code"]', r).value.trim(), supplier_name: ($('[data-k="supplier_name"]', r) || { value: undefined }).value?.trim() })) }] });
+        <label>Anglický název</label><input data-k="supplier_name" value="${esc(pr.supplier_name || '')}" placeholder="např. Decking board WPC dark brown, 3.6 m">
+        <label>Kód u dodavatele (MPN) — nepovinné</label><input data-k="supplier_code" value="${esc(pr.supplier_code || (/^[A-Z]\d{2}[0-9A-Z]{9}$/.test(i.code) ? i.code : ''))}" placeholder="můžeš nechat prázdné"></div>`; }).join('')}</div>`,
+      actions: [{ label: 'Zrušit', value: null }, { label: 'Pokračovat bez toho', value: 'skip' }, { label: 'Uložit a pokračovat', cls: 'primary', value: bd => $$('.fillrow', bd).map(r => ({ code: r.dataset.c, supplier_code: $('[data-k="supplier_code"]', r).value.trim(), supplier_name: ($('[data-k="supplier_name"]', r) || { value: undefined }).value?.trim() })) }] });
     if (!v) return false;
+    if (v === 'skip') { miss.forEach(i => OJ.fillSkip.add(i.code)); return true; }
     try {
       for (const r of v) {
         const f = { updated_at: nowIso() }; const pr = OJ.products[r.code] || {};
@@ -2419,7 +2421,7 @@ async function ojFillMissing(items, sup) {
         if (Object.keys(f).length > 1) { check(await sb.from('oj_products').update(f).eq('code', r.code)); Object.assign(pr, f); OJ.products[r.code] = pr; }
       }
     } catch (e) { toast(e.message, true); return false; }
-    warn = true;
+    miss.forEach(i => OJ.fillSkip.add(i.code));
   }
 }
 const ojMailto = m => `mailto:${m.to.replace(/\s/g, '')}?subject=${encodeURIComponent(m.subject)}&body=${encodeURIComponent(m.body.replace(/\r?\n/g, '\r\n'))}`;
@@ -2432,8 +2434,8 @@ function ojBuildMail(order, sup, lines) {
   const cz = sup.country === 'CZ';
   const unitEn = u => ({ ks: 'pcs', 'm²': 'm²', bal: 'pack(s)' })[u] || u;
   const q = n => cz ? fmtQ(n).replace(/\s/g, '') : String(Math.round(Number(n) * 1000) / 1000);
-  // v e-mailu musí být KÓD DODAVATELE (MPN), náš interní kód dodavatel nezná; u zahraničních dodavatelů anglický název
-  const txt = lines.map((l, i) => { const pr = OJ.products[l.ourCode] || {}; const nm = cz ? (l.csName || '') : (pr.supplier_name || l.name || ''); return `${i + 1}. ${l.code || '??? CHYBÍ KÓD DODAVATELE (' + l.ourCode + ')'}${nm ? ' – ' + nm : ''} – ${q(l.qty)} ${cz ? l.unit : unitEn(l.unit)}`; });
+  // do e-mailu jde kód dodavatele (MPN), pokud ho máme — náš interní kód tam nikdy není; u zahraničních dodavatelů anglický název
+  const txt = lines.map((l, i) => { const pr = OJ.products[l.ourCode] || {}; const nm = cz ? (l.csName || '') : (pr.supplier_name || l.name || l.csName || ''); const head = [l.code, nm].filter(Boolean).join(' – ') || l.ourCode; return `${i + 1}. ${head} – ${q(l.qty)} ${cz ? l.unit : unitEn(l.unit)}`; });
   const sig = cfg().ojSignature || `${cz ? 'S pozdravem' : 'Best regards'},\n${S.me.name}\nVinylor.cz`;
   const ref = order.code;
   const body = cz
@@ -2451,7 +2453,7 @@ async function ojMailDialog({ order, sup, mail, auf }) {
     { label: 'Gmail', value: bd => { const m = get(bd); ojOpenUrl(ojGmail(m), true); return { keep: true, ...m }; } },
     { label: 'Outlook', value: bd => { const m = get(bd); ojOpenUrl(ojOutlook(m), true); return { keep: true, ...m }; } },
     ...(auf ? [] : [{ label: 'Uložit jen koncept', value: bd => ({ ...get(bd), sent: false }) }]),
-    ...(canSend ? [{ label: 'Označit jako odesláno', value: bd => { const m = get(bd); if (m.body.includes('???')) { toast('V textu je „???“ — chybí kód dodavatele. Oprav ho nebo ho doplň u produktu.', true); return { keep: true, ...m }; } if (!m.to) { toast('Doplň e-mail příjemce.', true); return { keep: true, ...m }; } return { ...m, sent: true }; }, cls: 'solid' }] : []),
+    ...(canSend ? [{ label: 'Označit jako odesláno', value: bd => { const m = get(bd); if (!m.to) { toast('Doplň e-mail příjemce.', true); return { keep: true, ...m }; } return { ...m, sent: true }; }, cls: 'solid' }] : []),
     { label: 'Otevřít v e-mailu', cls: 'primary', value: bd => { const m = get(bd); ojOpenUrl(ojMailto(m)); return { keep: true, ...m }; } }];
   for (;;) {
     const v = await modal({ title: `E-mail dodavateli · ${sup.name}`,
