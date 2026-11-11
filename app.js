@@ -279,6 +279,7 @@ async function route() {
       return logout(e.message);
     }
   }
+  document.body.classList.toggle('no-tb', /^#\/(o|s)\//.test(h));
   if (leaveGuard) { const g = leaveGuard; leaveGuard = null; await g(); }
   if (S.me.must_change && h !== '#/ucet') { location.hash = '#/ucet'; return; }
   if (routeCleanup) { const c = routeCleanup; routeCleanup = null; c(); }
@@ -303,6 +304,16 @@ window.addEventListener('hashchange', route);
 route();
 window.addEventListener('focus', () => { if ((location.hash || '#/') === '#/' && S.me) refreshOffers().catch(() => {}); });
 
+const setSide = on => { $('#side')?.classList.toggle('open', on); $('#scrim')?.classList.toggle('on', on); };
+// na telefonu se z tabulek dělají přehledné karty: každá buňka dostane popisek z hlavičky sloupce
+function labelTables() {
+  if (innerWidth > 820) return;
+  $$('.main table.list').forEach(t => {
+    const hs = [...t.querySelectorAll('thead th')].map(h => h.textContent.trim());
+    t.querySelectorAll('tbody tr').forEach(tr => [...tr.children].forEach((td, i) => { if (td.colSpan === 1 && !td.dataset.l && hs[i]) td.dataset.l = hs[i]; }));
+  });
+}
+{ let q = 0; new MutationObserver(() => { if (q) return; q = requestAnimationFrame(() => { q = 0; labelTables(); }); }).observe(document.getElementById('app'), { childList: true, subtree: true }); }
 function shell(active, inner) {
   const nav = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ico">${icon}</span><span>${label}</span></a>`;
   if (!$('.shell')) {
@@ -311,9 +322,15 @@ function shell(active, inner) {
     <div class="shell">
       <aside class="side" id="side"></aside>
       <main class="main" id="main"></main>
-    </div>`;
-    $('#menuBtn').onclick = () => $('#side').classList.toggle('open');
+    </div>
+    <div class="scrim" id="scrim"></div>
+    <nav class="tabbar" id="tabbar" aria-label="Hlavní navigace"></nav>`;
+    $('#menuBtn').onclick = () => setSide(!$('#side').classList.contains('open'));
+    $('#scrim').onclick = () => setSide(false);
   }
+  const tab = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ti">${icon}</span><span>${label}</span></a>`;
+  $('#tabbar').innerHTML = `${tab('#/', 'offers', '📄', 'Nabídky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}${tab('#/nastenka', 'boards', '🗂️', 'Nástěnka')}${hasApp('kontejnery') ? tab('#/kontejnery', 'ct', '🚢', 'Kontejnery') : tab('#/navstevy', 'visits', '🚶', 'Návštěvy')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
+  $('#tbMenu').onclick = () => setSide(true);
   $('#side').innerHTML = `
     <a class="brand" href="#/"><img src="img/icon.png" alt=""><span>Vinylor Hub<small>automatizace</small></span></a>
     <nav class="nav">
@@ -330,7 +347,7 @@ function shell(active, inner) {
     </nav>
     <div class="me"><div class="who"><span class="av lg">${initials(S.me.id)}</span><div><b>${esc(S.me.name)}</b><a href="#/ucet">Účet</a><a href="#" id="logout">Odhlásit</a></div></div>${themeToggle()}${CREDIT}</div>`;
   $('#logout').onclick = e => { e.preventDefault(); logout(); };
-  $('#side').onclick = e => { if (e.target.closest('a')) $('#side').classList.remove('open'); };
+  $('#side').onclick = e => { if (e.target.closest('a')) setSide(false); };
   // nový <main> bez posluchačů z předchozí obrazovky
   const old = $('#main'); const main = old.cloneNode(false); old.replaceWith(main);
   main.className = 'main';
@@ -1358,6 +1375,7 @@ async function renderSettings() {
 
     <section class="panel"><div class="panel-h">📦 Naskladnění</div><div class="panel-b form">
       ${inp('stockRate', 'Výchozí kurz EUR/CZK (když se nepodaří načíst ČNB)', s.stockRate ?? 24.2055, '', 'number', 'step="0.0001"')}
+      ${inp('stockRateUsd', 'Výchozí kurz USD/CZK (když se nepodaří načíst ČNB)', s.stockRateUsd ?? 21.5, '', 'number', 'step="0.0001"')}
       ${inp('stockTransportPct', 'Doprava k nákupní ceně (%)', s.stockTransportPct ?? 10, '', 'number', 'step="0.5"')}
       ${inp('marginWarn', 'Upozornit na marži pod (%) — oranžově', s.marginWarn ?? 25, '', 'number')}
       ${inp('marginBad', 'Varovat při marži pod (%) — červeně', s.marginBad ?? 15, '', 'number')}
@@ -1430,7 +1448,7 @@ async function renderSettings() {
     const f = new FormData(e.target);
     const fresh = (await loadSettings()).data; // ať nepřepíšeme číslo řady, které mezitím někdo použil
     const data = { ...fresh, supplier: { ...(fresh.supplier || {}) } };
-    const nums = ['numberDigits', 'nextNumber', 'validDays', 'defaultDiscount', 'defaultVat', 'priceStep', 'stockRate', 'stockTransportPct', 'marginWarn', 'marginBad', 'shoptetStockId'];
+    const nums = ['numberDigits', 'nextNumber', 'validDays', 'defaultDiscount', 'defaultVat', 'priceStep', 'stockRate', 'stockRateUsd', 'stockTransportPct', 'marginWarn', 'marginBad', 'shoptetStockId'];
     for (const [k, v] of f) {
       if (k.startsWith('s.')) data.supplier[k.slice(2)] = v;
       else data[k] = nums.includes(k) ? Number(v) : v;
@@ -1629,12 +1647,14 @@ function evalPrice(v) {
   const expr = () => { let x = term(); while (t[i] === '+' || t[i] === '-') { const o = t[i++]; const y = term(); x = o === '+' ? x + y : x - y; } return x; };
   try { const n = expr(); return i === t.length && Number.isFinite(n) ? Calc.r2(n * 10000) / 10000 : null; } catch { return null; }
 }
-const curSign = c => (c === 'CZK' ? 'Kč' : '€');
+const curSign = c => ({ CZK: 'Kč', USD: '$' })[c] || '€';
+const isFx = c => c !== 'CZK';
+const defRate = c => Number(c === 'USD' ? cfg().stockRateUsd : cfg().stockRate) || (c === 'USD' ? 21.5 : 24.2);
 function stockLine(it, rc) {
   const vat = 21;
   const price = evalPrice(it.priceInput);
   const qty = toNum(it.qty);
-  const rate = rc.currency === 'CZK' ? 1 : Number(rc.rate) || 0;
+  const rate = !isFx(rc.currency) ? 1 : Number(rc.rate) || 0;
   const unitCost = price == null ? null : price * (1 + (Number(rc.transportPct) || 0) / 100) * rate; // Kč bez DPH
   const sellVat = it.sellPriceVat == null || it.sellPriceVat === '' ? null : toNum(it.sellPriceVat);
   const sellNet = sellVat == null ? null : sellVat / (1 + vat / 100);
@@ -1674,12 +1694,13 @@ function priceMemory(excludeId) {
   }
   return { byCode, byFamily };
 }
-function predictPrice(p, supplier, mem) {
+function predictPrice(p, supplier, mem, cur) {
   const c = mem.byCode.get(p.code);
+  if (c && cur && c.currency !== cur) return { priceInput: '', src: `⚠ dříve ${c.priceInput} ${curSign(c.currency)} (jiná měna) — zadej cenu v ${curSign(cur)}` };
   if (c) return { priceInput: c.priceInput, src: `naposledy ${czDate(c.date)}${c.doc ? ' · ' + c.doc : ''}` };
   const len = lengthOf(p.variant) || lengthOf(p.name);
   const fam = len && mem.byFamily.get(familyKey(p.name, supplier || p.supplier));
-  if (fam) return { priceInput: `${fam.base}*${numStr(len)}`, src: `odhad: ${fam.base} €/m × ${numStr(len)} m` };
+  if (fam && (!cur || fam.currency === cur)) return { priceInput: `${fam.base}*${numStr(len)}`, src: `odhad: ${fam.base} ${curSign(fam.currency)}/m × ${numStr(len)} m` };
   return null;
 }
 
@@ -1814,8 +1835,8 @@ async function renderReceipt(id) {
       <div><label>Číslo dokladu</label><input data-r="docNo" value="${esc(rc.docNo)}" placeholder="např. AR00546325"></div>
       <div><label>Dodavatel</label><input data-r="supplier" list="supList" value="${esc(rc.supplier)}" placeholder="Gunreben, MEFO…"><datalist id="supList">${suppliers.map(s => `<option value="${esc(s)}">`).join('')}</datalist></div>
       <div><label>Datum</label><input type="date" data-r="date" value="${esc(rc.date)}"></div>
-      <div><label>Měna nákupu</label><div class="seg" id="curSeg" style="width:100%"><button data-c="EUR" style="flex:1">EUR €</button><button data-c="CZK" style="flex:1">CZK Kč</button></div></div>
-      <div id="rateBox"><label>Kurz EUR/CZK</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input data-r="rate" inputmode="decimal" value="${esc(numStr(rc.rate))}"><button class="btn sm" id="cnb" title="Načíst kurz ČNB ke dni dokladu">ČNB</button></div></div>
+      <div><label>Měna nákupu</label><div class="seg" id="curSeg" style="width:100%"><button data-c="EUR" style="flex:1">EUR €</button><button data-c="USD" style="flex:1">USD $</button><button data-c="CZK" style="flex:1">CZK Kč</button></div></div>
+      <div id="rateBox"><label id="rateLbl">Kurz ${rc.currency === 'CZK' ? 'EUR' : rc.currency}/CZK</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input data-r="rate" inputmode="decimal" value="${esc(numStr(rc.rate))}"><button class="btn sm" id="cnb" title="Načíst kurz ČNB ke dni dokladu">ČNB</button></div></div>
       <div><label>Doprava</label><div class="fld"><input data-r="transportPct" inputmode="decimal" value="${esc(numStr(rc.transportPct))}"><span class="suf">%</span></div></div>
       <div class="full"><label>Poznámka</label><input data-r="note" value="${esc(rc.note)}" placeholder="nepovinné"></div>
     </div>
@@ -1851,11 +1872,12 @@ async function renderReceipt(id) {
   // --- hlavička dokladu ---
   function drawHead() {
     $$('#curSeg button').forEach(b => b.classList.toggle('on', b.dataset.c === rc.currency));
-    $('#rateBox').style.visibility = rc.currency === 'EUR' ? '' : 'hidden';
+    $('#rateBox').style.visibility = isFx(rc.currency) ? '' : 'hidden'; $('#rateLbl').textContent = 'Kurz ' + rc.currency + '/CZK';
     $('#rstep1').classList.toggle('done', !!(rc.docNo && rc.supplier)); $('#rstep1').textContent = rc.docNo && rc.supplier ? '✓' : '1';
     $('#rcTitle').textContent = rc.docNo || 'bez čísla';
   }
-  $('#curSeg').onclick = e => { const b = e.target.closest('[data-c]'); if (!b) return; rc.currency = b.dataset.c; if (rc.currency === 'CZK') rc.transportPct = 0; $('[data-r="transportPct"]').value = numStr(rc.transportPct); drawHead(); drawItems(); markDirty(); };
+  $('#curSeg').onclick = e => { const b = e.target.closest('[data-c]'); if (!b) return; const prev = rc.currency; rc.currency = b.dataset.c; if (rc.currency === 'CZK') rc.transportPct = 0;
+    if (isFx(rc.currency) && prev !== rc.currency) { rc.rate = defRate(rc.currency); const ri = $('[data-r="rate"]'); if (ri) ri.value = numStr(rc.rate); loadCnb(true); } $('[data-r="transportPct"]').value = numStr(rc.transportPct); drawHead(); drawItems(); markDirty(); };
   $('#main').addEventListener('input', e => {
     const k = e.target.dataset.r; if (!k) return;
     rc[k] = ['rate', 'transportPct'].includes(k) ? toNum(e.target.value) : e.target.value;
@@ -1864,12 +1886,12 @@ async function renderReceipt(id) {
   async function loadCnb(silent) {
     const b = $('#cnb'); b.disabled = true; b.innerHTML = '<span class="spin"></span>';
     try {
-      const { data, error } = await sb.functions.invoke('hub-cnb-rate', { body: { currency: 'EUR', date: rc.date } });
+      const { data, error } = await sb.functions.invoke('hub-cnb-rate', { body: { currency: rc.currency === 'CZK' ? 'EUR' : rc.currency, date: rc.date } });
       if (error || !data?.rate) throw new Error(data?.error || error?.message || 'kurz nenalezen');
       rc.rate = Calc.r2(data.rate * 1000) / 1000;
       const i = $('[data-r="rate"]'); i.value = numStr(rc.rate); i.classList.remove('filled'); void i.offsetWidth; i.classList.add('filled');
       refreshAll(); markDirty();
-      if (!silent) toast(`Kurz ČNB ${numStr(rc.rate)} Kč/€ (platný ${czDate(data.validFor)})`);
+      if (!silent) toast(`Kurz ČNB ${numStr(rc.rate)} Kč/${curSign(rc.currency)} (platný ${czDate(data.validFor)})`);
     } catch (err) { if (!silent) toast('ČNB: ' + err.message, true); }
     b.disabled = false; b.textContent = 'ČNB';
   }
@@ -1964,7 +1986,7 @@ async function renderReceipt(id) {
   });
   const rid = () => crypto.randomUUID().slice(0, 12);
   function addProduct(p, qty) {
-    const pred = p ? predictPrice(p, rc.supplier, mem) : null;
+    const pred = p ? predictPrice(p, rc.supplier, mem, rc.currency) : null;
     const it = {
       id: rid(), code: p ? p.code : '', name: p ? p.name : '', variant: p ? p.variant : '',
       priceInput: pred ? pred.priceInput : '', priceSrc: pred ? pred.src : '', qty: qty ?? '', sellPriceVat: p ? p.priceVat : null, stocked: false,
@@ -1996,11 +2018,11 @@ async function renderReceipt(id) {
     const q = sq.value;
     sr.hidden = false;
     sr.innerHTML = found.length ? found.map((p, i) => {
-      const pred = predictPrice(p, rc.supplier, mem);
+      const pred = predictPrice(p, rc.supplier, mem, rc.currency);
       return `<div class="res ${i === sel ? 'on' : ''}" data-i="${i}">
         <code>${highlight(p.code, q)}</code>
         <div>${highlight(p.name, q)}${p.visible ? '' : '<span class="tag grey">skrytý</span>'}${rc.items.some(x => x.code === p.code) ? '<span class="tag blue">v příjemce</span>' : ''}
-          <div class="v">${[p.variant && highlight(p.variant, q), p.supplier && esc(p.supplier), pred && `nákup ${esc(pred.priceInput)} ${curSign(rc.currency)}`].filter(Boolean).join(' · ')}</div></div>
+          <div class="v">${[p.variant && highlight(p.variant, q), p.supplier && esc(p.supplier), pred && pred.priceInput && `nákup ${esc(pred.priceInput)} ${curSign(rc.currency)}`].filter(Boolean).join(' · ')}</div></div>
         <div class="p">${M(p.priceVat)} Kč</div></div>`;
     }).join('') : '<div class="empty">Nic nenalezeno — přidej položku „Mimo e-shop“</div>';
     $('.res.on', sr)?.scrollIntoView({ block: 'nearest' });
@@ -2151,7 +2173,7 @@ async function renderReceipt(id) {
 
   drawHead(); drawItems();
   // nová prázdná příjemka v EUR → rovnou načti dnešní kurz ČNB
-  if (!rc.items.length && rc.currency === 'EUR' && !rc.docNo) { loadCnb(true); $('[data-r="docNo"]').focus(); }
+  if (!rc.items.length && isFx(rc.currency) && !rc.docNo) { loadCnb(true); $('[data-r="docNo"]').focus(); }
 }
 
 // =====================================================================

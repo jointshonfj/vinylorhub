@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.22.1';
+export const APP_VERSION = '0.23.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.23.0', d: '2026-11-11', t: ['Nová měna USD v Naskladnění: přepínač EUR / USD / CZK, kurz USD/CZK z ČNB (výchozí kurz v Nastavení), cena z dřívějška v jiné měně se nepředvyplní', 'Mobil: spodní navigační lišta, zásuvka menu s tmavým pozadím, okna jako spodní list, tabulky se na telefonu zobrazují jako karty, větší dotykové plochy, plovoucí tlačítko Nová nabídka, bezpečné okraje pro iPhone'] },
   { v: '0.22.1', d: '2026-11-10', t: ['OrderJoi e-mail: kód dodavatele (MPN) je nepovinný — když chybí, jde do e-mailu jen anglický název; ptá se se jen na chybějící anglický název a jde to přeskočit'] },
   { v: '0.22.0', d: '2026-11-10', t: ['OrderJoi: nástěnka objednávek jako v Trellu — sloupce Reklamace / Objednat / Čeká na AUF / Bez svozu / Na cestě / Doručeno, karty se přetahují myší nebo přes „⋯“, posun jde vrátit; ručně posunutá objednávka se sama vrátí k datům, jakmile se skutečný stav změní', 'Přepínač Nástěnka / Seznam, hledání a filtr dodavatele i na nástěnce'] },
   { v: '0.21.0', d: '2026-11-10', t: ['OrderJoi: e-mail dodavateli používá kód dodavatele (MPN), nikdy náš interní; chybějící kód a anglický název se doplní před e-mailem a uloží k produktu', 'E-mail: tlačítka Gmail a Outlook vedle „Otevřít v e-mailu“, hlídá chybějící kód a příjemce', 'AUF: tlačítka „Označit jako odesláno“ a „Zrušit potvrzení“, štítek „čeká N dní“, „e-mail neodeslán“', 'Hledání a filtry: dodavatel u objednávek, AUFy (hledání + stav), Produkty (bez dodavatele / chybí MPN / chybí EN název)'] },
