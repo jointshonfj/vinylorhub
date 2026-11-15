@@ -1250,3 +1250,31 @@ a, button, .chip, .card, .btn, select, summary { touch-action: manipulation; -we
   .card .stbtn { min-height: 38px; padding-inline: 12px; }
   .card { padding: 13px 14px; }
 }
+
+
+/* Objednávky: přehled, výběr zboží */
+.oj-h { margin: 20px 0 8px; font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.oj-todo { display: grid; gap: 8px; }
+.oj-t { display: flex; align-items: center; gap: 14px; text-align: left; width: 100%; padding: 12px 14px; border-left: 4px solid var(--c); cursor: pointer; font: inherit; color: inherit; transition: transform .15s var(--ease), box-shadow .15s; }
+.oj-t:hover { transform: translateX(2px); box-shadow: var(--shadow-2); }
+.oj-ti { font-size: 22px; width: 32px; text-align: center; }
+.pp-list { max-height: 48vh; overflow-y: auto; margin: 10px 0 4px; display: flex; flex-direction: column; gap: 6px; }
+.pp-row { display: grid; grid-template-columns: minmax(0, 1fr) 76px 64px auto; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; }
+.pp-row .pp-q { text-align: right; } .pp-row select { width: 100%; padding-inline: 4px; }
+.pp-list .empty { text-align: center; padding: 18px 8px; }
+@media (max-width: 820px) { .pp-row { grid-template-columns: minmax(0, 1fr) 70px 58px; } .pp-row .pp-add { grid-column: 1 / -1; min-height: 40px; } .oj-t { padding: 12px; } .oj-t .btn { display: none; } }
+
+/* Objednávky: záložky dodavatelů */
+.oj-tabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; padding-bottom: 4px; }
+.oj-tabs::-webkit-scrollbar { display: none; } .oj-tabs .chip { flex: none; white-space: nowrap; }
+.oj-tabs .chip.sep { margin-left: 12px; position: relative; }
+.oj-tabs .chip.sep::before { content: ""; position: absolute; left: -9px; top: 22%; bottom: 22%; width: 1px; background: var(--line-2); }
+.oj-tabs .chip .tag { background: color-mix(in srgb, var(--s-postponed) 22%, transparent); color: var(--ink); }
+.oj-tabs .chip.on .tag { background: color-mix(in srgb, var(--on-ink) 22%, transparent); color: var(--on-ink); }
+.oj-tabs .chip .tag.grey { background: var(--hover); color: var(--muted); }
+.oj-suphead { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.oj-sups { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.oj-sup { text-align: left; padding: 14px 16px; cursor: pointer; font: inherit; color: inherit; transition: transform .15s var(--ease), box-shadow .15s; }
+.oj-sup:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+.oj-sc { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 12.5px; color: var(--muted); } .oj-sc b { color: var(--ink); font-size: 14px; }
+@media (max-width: 820px) { .oj-tabs { margin-inline: -14px; padding-inline: 14px; } }
