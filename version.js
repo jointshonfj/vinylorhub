@@ -1,10 +1,12 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.24.1';
+export const APP_VERSION = '0.25.1';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.25.1', d: '2026-11-15', t: ['Kontrola celé aplikace: statická analýza kódu bez chyb, odstraněn nepoužívaný kód', 'Mobil: čitelnější malé texty a štítky, větší tlačítka (✕, +7 d, cena), okna s mnoha tlačítky ve dvou sloupcích, kontrola všech obrazovek na šířku telefonu'] },
+  { v: '0.25.0', d: '2026-11-15', t: ['Objednávky: nová nástěnka Potřeba objednat → Objednáno → Na cestě → Doručeno (+ Reklamace); přetažení karty otevře okno: číslo objednávky + co a za kolik + poznámka, odhadované datum doručení, kontrola / reklamace / naskladnění', 'Počítá se jen zboží od sledovaných dodavatelů (Gunreben, MEFO) — ostatní (Hašpl…) se ignoruje; dodavatele jde zapnout/vypnout v Nastavení', 'Číslo nabídky / reference a poznámka u objednávky (hledá se podle nich, jsou vidět na kartě)', 'Nastavení → Objednávky: přejmenování sloupců; částka objednávky i v USD / CZK'] },
   { v: '0.24.1', d: '2026-11-15', t: ['Objednávky: samostatná záložka pro každého dodavatele (Gunreben, MEFO…) s vlastní nástěnkou, AUFy a svozy jen tohoto dodavatele; zvlášť záložky „Potřeba objednat“ (Shoptet) a „Na sklad“ (vlastní objednávky)', 'Přehled: karty dodavatelů s počty (k objednání, čeká na AUF, na cestě)'] },
   { v: '0.24.0', d: '2026-11-15', t: ['Nová záložka Objednávky (dříve OrderJoi v Naskladnění): vlastní položka v menu i ve spodní liště na mobilu', 'Přehled: „Co teď udělat“ (objednat, neodeslané e-maily, čeká na AUF, bez svozu, naskladnit, reklamace) a „Na cestě“ s očekávaným termínem', 'Objednávky na sklad: vlastní objednávky bez zákaznické objednávky (NS-rok-číslo), výběr zboží z katalogu s hledáním a množstvím, filtr Zákaznické / Na sklad', 'AUF: očekávané dodání, tlačítko „Přijmout zboží“ (kontrola počtů → reklamace → naskladnění) i bez svozu, „Reklamace vyřešena“'] },
   { v: '0.23.0', d: '2026-11-11', t: ['Nová měna USD v Naskladnění: přepínač EUR / USD / CZK, kurz USD/CZK z ČNB (výchozí kurz v Nastavení), cena z dřívějška v jiné měně se nepředvyplní', 'Mobil: spodní navigační lišta, zásuvka menu s tmavým pozadím, okna jako spodní list, tabulky se na telefonu zobrazují jako karty, větší dotykové plochy, plovoucí tlačítko Nová nabídka, bezpečné okraje pro iPhone'] },
