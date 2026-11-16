@@ -82,9 +82,11 @@ Deno.serve(async (req) => {
         if (!want) { result.status = 'notfound'; result.statusError = `Stav „${waitName}“ ve Shoptetu nenalezen. Dostupné: ` + list.map(s => s.name).join(', '); }
         else if (Number(order.status?.id) === want.id) { result.status = 'already'; result.statusName = want.name; }
         else {
-          const body = { data: { statusId: want.id, ...(sendEmail ? {} : { suppressEmailSending: true, suppressSmsSending: true }) } };
-          let r = await call('PATCH', `/orders/${encodeURIComponent(orderCode)}/status`, body);
-          if (r.status === 404 || r.status === 405) r = await call('PATCH', `/orders/${encodeURIComponent(orderCode)}`, body);
+          // e-mail / SMS zákazníkovi se potlačují parametry v URL (jako u zakládání objednávky), ne v těle požadavku
+          const qs = sendEmail ? '' : '?suppressEmailSending=true&suppressSmsSending=true';
+          const body = { data: { statusId: want.id } };
+          let r = await call('PATCH', `/orders/${encodeURIComponent(orderCode)}/status${qs}`, body);
+          if (r.status === 404 || r.status === 405) r = await call('PATCH', `/orders/${encodeURIComponent(orderCode)}${qs}`, body);
           const bad = r.status !== 200 || (r.json?.errors && r.json.errors.length);
           result.status = bad ? 'failed' : 'changed'; result.statusName = want.name;
           if (bad) result.statusError = errText(r);

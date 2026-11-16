@@ -2628,7 +2628,7 @@ async function ojTransitDialog(o, sid, final) {
   const now = nowIso();
   for (const r of v.rows) check(await sb.from('oj_aufs').update({ auf_number: r.n, expected_at: r.e, status: 'confirmed', confirmed_at: now, updated_at: now }).eq('id', r.id));
   if (final) toast('Označeno jako na cestě');
-  if (v.push) for (const r of v.rows) { const prev = as.find(x => x.id === r.id); if (r.n && r.n !== (prev && prev.auf_number)) await ojPushRef(o, sup, r.n); }
+  if (v.push) for (const r of v.rows) { const prev = as.find(x => x.id === r.id); if (r.n) await ojPushRef(o, sup, r.n); }
   return true;
 }
 // okno „Doručeno“: v pořádku / reklamace / zkontrolovat a naskladnit
@@ -2845,7 +2845,7 @@ async function renderOjOrder(code) {
           ${a.auf_number ? `<b>${esc(a.auf_number)}</b>` : ''}${a.amount_eur != null ? `<span>${fmtAmt(a)}</span>` : ''}${a.expected_at && !a.delivered_at ? `<span class="tag ${a.expected_at < ymd(new Date()) ? 'late' : 'blue'}" title="Očekávané dodání">📅 ${czDate(a.expected_at)}</span>` : ''}${sh ? `<a class="tag blue" href="#/svoz/${sh.id}">${esc(sh.reference || 'svoz')}</a>` : ''}${sh && sh.status === 'arrived' ? `<a class="btn sm primary" href="#/svoz/${sh.id}">📥 Naskladnit svoz</a>` : ''}
           ${a.delivery_status === 'issue' ? `<span class="tag" style="background:var(--s-rejected-bg,#fdd);color:var(--s-rejected,#c00)">${a.issue_resolved_at ? 'reklamace vyřešena' : 'reklamace'}</span>` : a.delivered_at ? '<span class="tag blue">doručeno</span>' : ''}<span class="grow"></span>
           <button class="btn sm" data-amail="${a.id}">✉ E-mail</button>
-          ${a.status === 'draft' ? `<button class="btn sm primary" data-asent="${a.id}">Označit jako odesláno</button>` : ''}${a.status === 'confirmed' && !a.shipment_id ? `<button class="btn sm primary" data-recv="${a.id}" title="Zboží dorazilo — zkontrolovat a naskladnit">📥 Přijmout zboží</button><button class="btn sm" data-aun="${a.id}" title="Vrátit na „Čeká na potvrzení“">↩ Zrušit potvrzení</button>` : ''}${a.delivery_status === 'issue' && !a.issue_resolved_at ? `<button class="btn sm" data-resolve="${a.id}">✓ Reklamace vyřešena</button>` : ''}
+          ${a.status === 'draft' ? `<button class="btn sm primary" data-asent="${a.id}">Označit jako odesláno</button>` : ''}${a.status === 'confirmed' && !a.shipment_id ? `<button class="btn sm primary" data-recv="${a.id}" title="Zboží dorazilo — zkontrolovat a naskladnit">📥 Přijmout zboží</button><button class="btn sm" data-aun="${a.id}" title="Vrátit na „Čeká na potvrzení“">↩ Zrušit potvrzení</button>` : ''}${a.delivery_status === 'issue' && !a.issue_resolved_at ? `<button class="btn sm" data-resolve="${a.id}">✓ Reklamace vyřešena</button>` : ''}${a.auf_number && ojShoptetEligible(order(), ojSup(a.supplier_id)) ? `<button class="btn sm" data-repush="${a.id}" title="Znovu zapsat č. objednávky do Shoptetu a přepnout stav">↻ Do Shoptetu</button>` : ''}
           ${a.status === 'sent' ? `<button class="btn sm primary" data-conf="${a.id}">Zadat č. objednávky u dodavatele</button>` : ''}${a.status === 'confirmed' && !a.shipment_id ? `<button class="btn sm" data-conf="${a.id}">Upravit potvrzení</button>` : ''}
           ${!a.shipment_id ? `<button class="btn sm danger" data-adel="${a.id}">Smazat</button>` : ''}</div>
           <div class="small muted" style="margin-top:6px">${a.lines.map(l => `${esc(l.code)} · ${fmtQ(l.qty)} ${esc(unitCz(l.unit))}`).join(' &nbsp;|&nbsp; ')}${a.sent_at ? ' &nbsp;·&nbsp; odesláno ' + czDate(a.sent_at) : ''}</div></div>`; }).join('')}`;
@@ -2895,7 +2895,7 @@ async function renderOjOrder(code) {
       const v = await modal({ title: 'Potvrzení od dodavatele', body: `<p class="muted small">Doplň číslo objednávky u dodavatele (z potvrzení) a částku z dokladu.</p><label>Číslo objednávky u dodavatele</label><input data-k="n" value="${esc(a.auf_number)}" placeholder="číslo z potvrzení"><label>Částka v EUR</label><input data-k="a" value="${a.amount_eur ?? ''}" placeholder="např. 1500,53"><label>Očekávané dodání (nepovinné — uvidíš to v přehledu „Na cestě“)</label><input type="date" data-k="e" value="${esc(a.expected_at || '')}">${ojPushBox(order(), ojSup(a.supplier_id), !a.auf_number)}`, focus: '[data-k="n"]',
         actions: [{ label: 'Zrušit', value: null }, { label: 'Uložit potvrzení', cls: 'primary', value: bd => ({ n: $('[data-k="n"]', bd).value.trim(), a: toNum($('[data-k="a"]', bd).value), e: $('[data-k="e"]', bd).value || null, push: !!($('[data-k="push"]', bd) || {}).checked }) }] });
       if (!v) return; if (!v.n) return toast('Doplň číslo objednávky u dodavatele', true);
-      try { check(await sb.from('oj_aufs').update({ auf_number: v.n, amount_eur: v.a > 0 ? v.a : null, expected_at: v.e, status: 'confirmed', confirmed_at: a.confirmed_at || nowIso(), updated_at: nowIso() }).eq('id', a.id)); await reload(); toast('Potvrzení uloženo'); if (v.push && v.n !== a.auf_number) await ojPushRef(order(), ojSup(a.supplier_id), v.n); } catch (e) { toast(e.message, true); }
+      try { check(await sb.from('oj_aufs').update({ auf_number: v.n, amount_eur: v.a > 0 ? v.a : null, expected_at: v.e, status: 'confirmed', confirmed_at: a.confirmed_at || nowIso(), updated_at: nowIso() }).eq('id', a.id)); await reload(); toast('Potvrzení uloženo'); if (v.push) await ojPushRef(order(), ojSup(a.supplier_id), v.n); } catch (e) { toast(e.message, true); }
     });
     $$('[data-asent]', body).forEach(b => b.onclick = async () => {
       if (!(await confirmBox('Označit jako odesláno?', 'E-mail dodavateli jsi odeslal(a). Objednávka pak čeká na potvrzení od dodavatele.', { ok: 'Odesláno' }))) return;
@@ -2905,6 +2905,7 @@ async function renderOjOrder(code) {
       try { check(await sb.from('oj_aufs').update({ status: 'sent', confirmed_at: null, updated_at: nowIso() }).eq('id', b.dataset.aun)); await reload(); toast('Vráceno na „Čeká na potvrzení“'); } catch (e) { toast(e.message, true); }
     });
     $$('[data-recv]', body).forEach(b => b.onclick = () => ojReceiveAuf(b.dataset.recv));
+    $$('[data-repush]', body).forEach(b => b.onclick = async () => { const a = OJ.aufs.find(x => x.id === b.dataset.repush); b.disabled = true; await ojPushRef(order(), ojSup(a.supplier_id), a.auf_number); await reload(); });
     $$('[data-resolve]', body).forEach(b => b.onclick = async () => { try { check(await sb.from('oj_aufs').update({ issue_resolved_at: nowIso(), updated_at: nowIso() }).eq('id', b.dataset.resolve)); await reload(); toast('Reklamace vyřešena'); } catch (e) { toast(e.message, true); } });
     $$('[data-adel]', body).forEach(b => b.onclick = async () => {
       if (!(await confirmBox('Smazat objednávku u dodavatele?', 'Položky se vrátí do „Objednat“. E-mail, který už odešel, tím nevezmeš zpět.', { ok: 'Smazat', danger: true }))) return;
