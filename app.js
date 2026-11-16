@@ -2373,6 +2373,32 @@ function drawOj() {
   fn(infos);
 }
 
+// ---------- kopírování soupisu čísel objednávek u dodavatele + referencí ----------
+const ojRowOf = a => { const o = OJ.orders.find(x => x.code === a.order_code) || {}; return { num: a.auf_number || '', order: a.order_code, ref: o.ref || '', sup: (ojSup(a.supplier_id) || {}).name || '', amt: a.amount_eur != null ? fmtAmt(a) : '', note: o.note || '' }; };
+async function ojCopyRows(rows, title) {
+  const fmts = { table: 'Tabulka (do Excelu): č. obj. u dodavatele, objednávka, reference, dodavatel, částka', lines: 'Jen čísla objednávek u dodavatele — každé na řádek', comma: 'Jen čísla objednávek u dodavatele — oddělená čárkou', both: 'Č. obj. u dodavatele – reference (každé na řádek)' };
+  const build = f => {
+    const uniq = [...new Map(rows.map(r => [r.num + '|' + r.order, r])).values()];
+    if (f === 'lines') return [...new Set(uniq.map(r => r.num).filter(Boolean))].join('\n');
+    if (f === 'comma') return [...new Set(uniq.map(r => r.num).filter(Boolean))].join(', ');
+    if (f === 'both') return uniq.map(r => [r.num || '(bez čísla)', r.ref || r.order].join(' – ')).join('\n');
+    return ['Č. obj. u dodavatele\tObjednávka\tReference\tDodavatel\tČástka', ...uniq.map(r => [r.num, r.order, r.ref, r.sup, r.amt].join('\t'))].join('\n');
+  };
+  if (!rows.length) return toast('Není co kopírovat.', true);
+  const done = modal({ title: title || 'Kopírovat soupis', body: `<label>Formát</label><select id="cpFmt">${Object.entries(fmts).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
+    <label>Soupis <span class="muted small" id="cpN"></span></label><textarea id="cpTxt" rows="9" readonly style="font-family:var(--mono, monospace);font-size:13px"></textarea>
+    <button class="btn primary" id="cpGo" style="margin-top:10px;width:100%">📋 Kopírovat do schránky</button>`, focus: '#cpGo', actions: [{ label: 'Zavřít', value: null }] });
+  setTimeout(() => {
+    const bd = $$('.backdrop').pop(); if (!bd) return; const sel = $('#cpFmt', bd), ta = $('#cpTxt', bd);
+    const draw = () => { ta.value = build(sel.value); $('#cpN', bd).textContent = `· ${ta.value ? ta.value.split('\n').length - (sel.value === 'table' ? 1 : 0) : 0} řádků`; };
+    sel.onchange = draw; draw();
+    $('#cpGo', bd).onclick = async () => {
+      try { await navigator.clipboard.writeText(ta.value); toast('Zkopírováno do schránky ✓'); }
+      catch { ta.removeAttribute('readonly'); ta.select(); toast('Označeno — zkopíruj ručně (Cmd+C)', true); }
+    };
+  }, 40);
+  await done;
+}
 // ---------- záložka Přehled: co teď udělat + co je na cestě ----------
 function ojGo(tab, f = {}) { OJ.tab = tab; ls.set('vh_oj_tab', tab); Object.assign(OJ, { q: '', card: '', ...f }); drawOj(); window.scrollTo(0, 0); }
 function drawOjOverview(infos) {
@@ -2513,7 +2539,7 @@ function drawOjBoard(el, list) {
   <div class="board oj-board">${OJ_COLS.map(st => {
     const cards = list.filter(i => i.stage === st).sort((a, b) => String(b.o.order_date).localeCompare(String(a.o.order_date)) || b.o.code.localeCompare(a.o.code));
     const [lbl, sc] = OJ_STAGE[st];
-    return `<section class="col" data-drop="${st}" style="--c:${OJ_COL_COLOR[sc]}"><div class="col-h">${lbl} <span class="cnt">${cards.length}</span></div>
+    return `<section class="col" data-drop="${st}" style="--c:${OJ_COL_COLOR[sc]}"><div class="col-h">${lbl} <span class="cnt">${cards.length}</span>${st !== 'order' && cards.length ? `<button class="archbtn oj-cp" data-cp="${st}" title="Kopírovat soupis čísel objednávek u dodavatele a referencí">📋 <span class="oj-cpt">Kopírovat soupis</span></button>` : ''}</div>
       <div class="col-body">${cards.map(ojCard).join('') || '<div class="empty">Přetáhni sem kartu</div>'}</div>
       ${cards.length > 6 ? `<div class="col-more">↓ dalších ${cards.length - 6} — posuň v sloupci</div>` : ''}</section>`;
   }).join('')}</div>
@@ -2527,6 +2553,15 @@ function drawOjBoard(el, list) {
     c.ondragend = () => c.classList.remove('dragging');
   });
   limitCols(el);
+  $$('.oj-cp', el).forEach(b => b.onclick = e => {
+    e.stopPropagation(); const st = b.dataset.cp;
+    const rows = [];
+    for (const i of list.filter(x => x.stage === st)) for (const a of i.aufs) {
+      const ok = st === 'ordered' ? !a.delivered_at && a.status !== 'confirmed' : st === 'transit' ? !a.delivered_at && a.status === 'confirmed' : st === 'delivered' ? !!a.delivered_at && a.delivery_status !== 'issue' : a.delivery_status === 'issue';
+      if (ok) rows.push(ojRowOf(a));
+    }
+    ojCopyRows(rows, `Soupis: ${OJ_STAGE[st][0]}${OJ.curSup ? ' · ' + (ojSup(OJ.curSup) || {}).name : ''}`);
+  });
   $$('.ojmv', el).forEach(b => b.onclick = async e => {
     e.stopPropagation(); const code = b.closest('.ojc').dataset.code; const inf = ojInfo(OJ.orders.find(x => x.code === code), OJ.curSup || undefined);
     const v = await popMenu(b, OJ_COLS.filter(c => c !== inf.stage).map(c => ({ label: '→ ' + OJ_STAGE[c][0], value: c, s: OJ_STAGE[c][1] })));
@@ -3001,17 +3036,19 @@ function drawOjAufs() {
   if (!AU.length) { el.innerHTML = '<div class="panel empty-big"><div class="ill">✉</div><h3>Zatím žádná potvrzení</h3><p>Potvrzení vznikne, když v detailu objednávky zadáš objednání u dodavatele.</p></div>'; return; }
   const F = [['', 'Vše', () => true], ['draft', 'Koncept', a => a.status === 'draft'], ['sent', 'Čeká na potvrzení', a => a.status === 'sent'], ['free', 'Bez svozu', a => a.status === 'confirmed' && !a.shipment_id], ['ship', 'Ve svozu', a => !!a.shipment_id], ['unpaid', 'K zaplacení', a => a.status !== 'draft' && !a.paid_at], ['paid', 'Zaplaceno', a => !!a.paid_at]];
   el.innerHTML = `<div class="topbar" style="margin:0 0 12px;gap:10px"><div class="search grow" style="max-width:480px"><span class="ic">⌕</span><input id="ojaq" placeholder="Hledat č. obj. u dodavatele, objednávku, dodavatele, kód…" value="${esc(OJ.aq)}"></div>
-    <div class="chips" id="ojaf">${F.map(([k, l, fn]) => `<button class="chip ${OJ.af === k ? 'on' : ''}" data-f="${k}">${l} <span class="tag grey">${AU.filter(fn).length}</span></button>`).join('')}</div></div><div id="ojAl"></div>`;
+    <button class="btn sm" id="ojaCopy" title="Zkopírovat soupis čísel objednávek u dodavatele a referencí">📋 Kopírovat soupis</button><div class="chips" id="ojaf">${F.map(([k, l, fn]) => `<button class="chip ${OJ.af === k ? 'on' : ''}" data-f="${k}">${l} <span class="tag grey">${AU.filter(fn).length}</span></button>`).join('')}</div></div><div id="ojAl"></div>`;
   const draw = () => {
     const q = fold(OJ.aq).trim(); const fn = F.find(x => x[0] === OJ.af)[2];
     const list = AU.filter(fn).filter(a => !q || fold([a.auf_number, a.order_code, (ojSup(a.supplier_id) || {}).name, ...a.lines.map(l => l.code + ' ' + l.ourCode + ' ' + (l.csName || l.name || ''))].join(' ')).includes(q))
       .sort((x, y) => (x.status === 'confirmed') - (y.status === 'confirmed') || String(y.created_at).localeCompare(x.created_at));
+    OJ._aufList = list;
     $('#ojAl').innerHTML = list.length ? `<div class="panel" style="overflow-x:auto"><table class="list"><thead><tr><th>Č. obj. u dodavatele</th><th>Dodavatel</th><th>Objednávka</th><th>Položek</th><th>Odesláno</th><th>Očekáváno</th><th class="r">Částka</th><th>Platba</th><th>Stav</th><th>Svoz</th></tr></thead><tbody>
     ${list.map(a => { const sh = OJ.shipments.find(x => x.id === a.shipment_id); return `<tr class="click" data-o="${esc(a.order_code)}"><td><b>${a.auf_number ? highlight(a.auf_number, OJ.aq) : '<span class="muted">čeká na číslo</span>'}</b></td><td>${ojSupLabel(ojSup(a.supplier_id))}</td><td><u>${highlight(a.order_code, OJ.aq)}</u></td><td>${a.lines.length}</td><td class="nowrap">${a.sent_at ? czDate(a.sent_at) : '—'}</td><td class="nowrap">${a.expected_at ? czDate(a.expected_at) : '—'}</td><td class="r nowrap">${fmtAmt(a)}</td><td class="nowrap">${a.status !== 'draft' ? ojPayTag(a) + ` <button class="btn sm" data-pay="${a.id}" title="Platba">💶</button>` : '—'}</td><td>${aufBadge(a)}</td><td>${sh ? esc(sh.reference || 'svoz') : '—'}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="panel empty-big"><div class="ill">🔍</div><h3>Nic nenalezeno</h3></div>';
     $$('#ojAl tr.click').forEach(r => r.onclick = e => { if (e.target.closest('[data-pay]')) return; location.hash = orderHref(r.dataset.o); });
     $$('#ojAl [data-pay]').forEach(b => b.onclick = async e => { e.stopPropagation(); try { if (await ojPayDialog(b.dataset.pay)) { await loadOj(); drawOj(); } } catch (er) { toast(er.message, true); } });
   };
   $('#ojaq').oninput = e => { OJ.aq = e.target.value; draw(); };
+  $('#ojaCopy').onclick = () => ojCopyRows((OJ._aufList || []).map(ojRowOf), 'Soupis: ' + ((F.find(x => x[0] === OJ.af) || [])[1] || 'Vše'));
   $$('#ojaf .chip').forEach(c => c.onclick = () => { OJ.af = c.dataset.f; drawOjAufs(); });
   draw();
 }

@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.28.0';
+export const APP_VERSION = '0.28.1';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.28.1', d: '2026-11-16', t: ['Objednávky: tlačítko „Kopírovat soupis“ u sloupců nástěnky (Objednáno, Na cestě…) a v záložce Potvrzení — čísla objednávek u dodavatele + reference jako tabulka do Excelu, seznam nebo čárkami'] },
   { v: '0.28.0', d: '2026-11-16', t: ['Objednávky: platba dodavateli — označit jako zaplacené s datem, splatnost; štítek platby na kartě i v detailu, filtr „K zaplacení“, přehled „K zaplacení dodavatelům“ (s upozorněním po splatnosti)', 'Nastavení → Objednávky: výchozí splatnost (dní) a upozornění na blížící se splatnost'] },
   { v: '0.27.1', d: '2026-11-16', t: ['Oprava: přepnutí objednávky ve Shoptetu do stavu „Čeká na zboží“ po zadání čísla objednávky u dodavatele (Shoptet odmítal parametr v těle požadavku)', 'U potvrzení objednávky nové tlačítko „↻ Do Shoptetu“ — znovu zapíše číslo a přepne stav'] },
   { v: '0.27.0', d: '2026-11-16', t: ['Historie pohybů je samostatná položka v levém menu (pod Kontejnery)', 'Pohyb a zpětná vazba podle pravidel animace: stisk se zmáčkne a vrátí s přeskokem, karty při přesunu dosednou s dozvukem, okna a hlášky přijedou s mírným přeskokem, krátké časy do 0,3 s, méně pohybu u často používaných věcí, vypnutelné v systému (omezit pohyb)', 'Navigace: tenký indikátor načítání při přechodu mezi obrazovkami, po návratu z detailu se seznam vrátí na stejné místo, větší klikací plochy u malých tlačítek'] },
