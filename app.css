@@ -1378,3 +1378,6 @@ body.nav-busy::before { opacity: 1; animation: navBar 1.2s var(--out) .15s both;
   *, *::before, *::after { animation-duration: .001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
   body.nav-busy::before { animation: none; transform: scaleX(.5); }
 }
+
+.oj-pay { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
+.tag.blue { white-space: nowrap; }

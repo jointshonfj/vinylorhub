@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.27.1';
+export const APP_VERSION = '0.28.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.28.0', d: '2026-11-16', t: ['Objednávky: platba dodavateli — označit jako zaplacené s datem, splatnost; štítek platby na kartě i v detailu, filtr „K zaplacení“, přehled „K zaplacení dodavatelům“ (s upozorněním po splatnosti)', 'Nastavení → Objednávky: výchozí splatnost (dní) a upozornění na blížící se splatnost'] },
   { v: '0.27.1', d: '2026-11-16', t: ['Oprava: přepnutí objednávky ve Shoptetu do stavu „Čeká na zboží“ po zadání čísla objednávky u dodavatele (Shoptet odmítal parametr v těle požadavku)', 'U potvrzení objednávky nové tlačítko „↻ Do Shoptetu“ — znovu zapíše číslo a přepne stav'] },
   { v: '0.27.0', d: '2026-11-16', t: ['Historie pohybů je samostatná položka v levém menu (pod Kontejnery)', 'Pohyb a zpětná vazba podle pravidel animace: stisk se zmáčkne a vrátí s přeskokem, karty při přesunu dosednou s dozvukem, okna a hlášky přijedou s mírným přeskokem, krátké časy do 0,3 s, méně pohybu u často používaných věcí, vypnutelné v systému (omezit pohyb)', 'Navigace: tenký indikátor načítání při přechodu mezi obrazovkami, po návratu z detailu se seznam vrátí na stejné místo, větší klikací plochy u malých tlačítek'] },
   { v: '0.26.0', d: '2026-11-16', t: ['Komentáře u objednávek se jménem autora a časem (ve vyhledávání, počet na kartě)', 'Místo „AUF“ se všude říká „potvrzení objednávky“ / „č. objednávky u dodavatele“', 'Shoptet: číslo objednávky u dodavatele (Gunreben, MEFO…) se zapíše do poznámky objednávky a ta se přepne do stavu „Čeká na zboží“ (název stavu a e-mail zákazníkovi v Nastavení → Objednávky)', 'Naskladnění → Historie pohybů: každý pohyb zásob (příjemka, objednávka dodavateli, kontejner, nabídka → objednávka) s dokladem, uživatelem a časem; filtry a export CSV'] },
