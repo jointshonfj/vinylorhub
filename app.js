@@ -261,7 +261,17 @@ async function aresSearch(q) {
 }
 
 // ---------- router ----------
+// uživatel musí do ~0,4 s vidět, že se něco děje: tenký pruh nahoře (objeví se až po 150 ms, ať neprobliká); po návratu z detailu se vrátí poloha seznamu
+const scrollMem = {}; let prevHash = '';
 async function route() {
+  const h = location.hash || '#/';
+  if (prevHash && prevHash !== h) scrollMem[prevHash] = window.scrollY;
+  const from = prevHash; prevHash = h;
+  document.body.classList.add('nav-busy');
+  try { await routeInner(); } finally { document.body.classList.remove('nav-busy'); }
+  if (from && /^#\/(o|s|oj|svoz|k|b)\//.test(from) && !/^#\/(o|s|oj|svoz|k|b)\//.test(h) && scrollMem[h] != null) window.scrollTo(0, scrollMem[h]);
+}
+async function routeInner() {
   const h = location.hash || '#/';
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return renderLogin();
@@ -330,7 +340,7 @@ function shell(active, inner) {
     $('#scrim').onclick = () => setSide(false);
   }
   const tab = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ti">${icon}</span><span>${label}</span></a>`;
-  $('#tabbar').innerHTML = `${tab('#/', 'offers', '📄', 'Nabídky')}${tab('#/objednavky', 'orders', '🚚', 'Objednávky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}${tab('#/nastenka', 'boards', '🗂️', 'Nástěnka')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account', 'ct'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
+  $('#tabbar').innerHTML = `${tab('#/', 'offers', '📄', 'Nabídky')}${tab('#/objednavky', 'orders', '🚚', 'Objednávky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}${tab('#/nastenka', 'boards', '🗂️', 'Nástěnka')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account', 'ct', 'moves'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
   $('#tbMenu').onclick = () => setSide(true);
   $('#side').innerHTML = `
     <a class="brand" href="#/"><img src="img/icon.png" alt=""><span>Vinylor Hub<small>automatizace</small></span></a>
@@ -341,6 +351,7 @@ function shell(active, inner) {
       ${nav('#/navstevy', 'visits', '🚶', 'Návštěvnost')}
       ${nav('#/nastenka', 'boards', '🗂️', 'Nástěnka')}
       ${hasApp('kontejnery') ? nav('#/kontejnery', 'ct', '🚢', 'Kontejnery') : '<a class="soon" href="#" title="Zatím jen pro vybrané uživatele"><span class="ico">🚢</span><span>Kontejnery</span><em>🔒</em></a>'}
+      ${nav('#/pohyby', 'moves', '📜', 'Historie pohybů')}
       <div class="nav-h">Systém</div>
       ${nav('#/nastaveni', 'settings', '⚙️', 'Nastavení')}
       ${nav('#/ucet', 'account', '👤', 'Můj účet')}
@@ -2230,8 +2241,7 @@ const aufBadge = a => `<span class="st" data-s="${OJ_AUF[a.status][1]}">${OJ_AUF
 const orderHref = code => '#/oj/' + encodeURIComponent(code);
 const stockTabs = active => `<div class="chips" id="skTabs" style="margin-bottom:14px">
   <button class="chip ${active === 'rc' ? 'on' : ''}" data-go="#/sklad">📦 Příjemky</button>
-  <button class="chip ${active === 'oj' ? 'on' : ''}" data-go="#/objednavky">🚚 Objednávky dodavatelům</button>
-  <button class="chip ${active === 'mv' ? 'on' : ''}" data-go="#/pohyby">📜 Historie pohybů</button></div>`;
+  <button class="chip ${active === 'oj' ? 'on' : ''}" data-go="#/objednavky">🚚 Objednávky dodavatelům</button></div>`;
 const bindStockTabs = () => $$('#skTabs [data-go]').forEach(b => b.onclick = () => { location.hash = b.dataset.go; });
 const supOptions = (sel, empty = '— dodavatel —') => `<option value="">${empty}</option>` + OJ.suppliers.map(s => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${esc(s.name)}</option>`).join('');
 const nowIso = () => new Date().toISOString();
@@ -2454,7 +2464,7 @@ function ojBindView() { const k = $('#ojKind'); if (k) k.onchange = () => { OJ.k
 function ojCard(i) {
   const o = i.o; const sup = i.sups.map(ojSupLabel).join(' · ');
   const its = i.orderable.slice(0, 3).map(x => `${esc(x.code)} · ${fmtQ(x.qty)} ${esc(unitCz(x.unit))}`).join('<br>') + (i.orderable.length > 3 ? `<br>+ ${i.orderable.length - 3} dalších` : '');
-  return `<article class="card ojc" draggable="true" data-code="${esc(o.code)}">
+  return `<article class="card ojc${OJ.moved === o.code ? ' moved' : ''}" draggable="true" data-code="${esc(o.code)}">
     <div class="t"><span class="no">${highlight(o.code, OJ.q)}</span><span>${o.order_date ? czDate(String(o.order_date).slice(0, 10)) : ''}</span></div>
     ${o.customer ? `<div class="cu">${esc(o.customer)}</div>` : ''}
     ${o.ref ? `<div class="small"><span class="tag blue">${highlight(o.ref, OJ.q)}</span></div>` : ''}
@@ -2511,8 +2521,9 @@ async function ojMove(code, target) {
   const sids = OJ.curSup ? [OJ.curSup] : [...new Set(ojInfo(o).sups.map(x => x.id))];
   if (!sids.length) return toast('Objednávka nemá sledovaného dodavatele — přiřaď ho v detailu.', true);
   try {
-    for (const sid of sids) { const ok = await ojMoveSup(o, sid, target); if (ok === false) break; }
-    await loadOj(); drawOj();
+    let did = false;
+    for (const sid of sids) { const ok = await ojMoveSup(o, sid, target); if (ok === false) break; did = true; }
+    await loadOj(); OJ.moved = did ? code : ''; drawOj(); OJ.moved = '';
   } catch (e) { toast(e.message, true); }
 }
 const ojStageOf = (o, sid) => ojInfo(o, sid).stage;
@@ -2666,16 +2677,15 @@ function mvQuery(from, to) {
 }
 const mvLink = r => ({ receipt: '#/s/' + r.ref_id, svoz: '#/svoz/' + r.ref_id, container: hasApp('kontejnery') ? '#/k/' + r.ref_id : '', order: '#/o/' + r.ref_id })[r.source] || '';
 async function renderMoves() {
-  shell('stock', `<div class="topbar"><h1>Naskladnění</h1></div><div class="panel panel-b"><div class="sk" style="height:220px"></div></div>`);
+  shell('moves', `<div class="topbar"><h1>Historie pohybů</h1></div><div class="panel panel-b"><div class="sk" style="height:220px"></div></div>`);
   try { await Promise.all([loadSettings(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
-  $('#main').innerHTML = `<div class="topbar"><h1>Naskladnění</h1></div>${stockTabs('mv')}
+  $('#main').innerHTML = `<div class="topbar"><h1>Historie pohybů</h1></div>
   <p class="muted small" style="margin:-4px 0 12px">Každý pohyb zásob, který aplikace poslala do Shoptetu: z jaké příjemky, objednávky dodavateli, kontejneru nebo nabídky, kdo to udělal a kdy.</p>
   <div class="topbar" style="gap:8px"><div class="search grow" style="max-width:420px"><span class="ic">⌕</span><input id="mvq" placeholder="Hledat kód zboží, číslo dokladu, kontejner…" value="${esc(MV.q)}"></div>
     <select id="mvwho" class="of-who"><option value="">Všichni uživatelé</option>${S.users.map(u => `<option value="${u.id}" ${MV.who === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
     <input type="date" id="mvfrom" value="${MV.from}" title="Od"><input type="date" id="mvto" value="${MV.to}" title="Do"><button class="btn sm" id="mvcsv">⬇ CSV</button></div>
   <div class="chips" id="mvsrc" style="margin-bottom:12px">${MV_SRC.map(([k, l]) => `<button class="chip ${MV.src === k ? 'on' : ''}" data-s="${k}">${l}</button>`).join('')}</div>
   <div id="mvsum" class="muted small" style="margin-bottom:8px"></div><div id="mvList"></div><div style="text-align:center;margin:14px 0"><button class="btn" id="mvmore" hidden>Načíst starší</button></div>`;
-  bindStockTabs();
   let t = null; $('#mvq').oninput = e => { MV.q = e.target.value; clearTimeout(t); t = setTimeout(() => mvLoad(true), 300); };
   $('#mvwho').onchange = e => { MV.who = e.target.value; mvLoad(true); }; $('#mvfrom').onchange = e => { MV.from = e.target.value; mvLoad(true); }; $('#mvto').onchange = e => { MV.to = e.target.value; mvLoad(true); };
   $$('#mvsrc .chip').forEach(c => c.onclick = () => { MV.src = c.dataset.s; $$('#mvsrc .chip').forEach(x => x.classList.toggle('on', x === c)); mvLoad(true); });
