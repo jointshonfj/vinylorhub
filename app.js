@@ -32,7 +32,7 @@ const STATUS_HINT = {
 };
 const ls = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
-const S = { me: null, users: [], offers: [], settings: null, products: null, view: ls.get('vh_view') || 'board', q: '', who: '', fStatus: '' };
+const S = { me: null, users: [], offers: [], settings: null, products: null, view: ls.get('vh_view') || 'over', q: '', who: '', fStatus: '' };
 const VERSION_LABEL = `v${APP_VERSION}${APP_CHANNEL ? ' ' + APP_CHANNEL : ''}`;
 const CREDIT = `<div class="credit">Postaveno na struktuře <b>SmartJoi</b>™<br>vytvořil <a href="https://www.jointshon.cz" target="_blank" rel="noopener">jointshon.cz</a><br><button type="button" class="ver-btn" data-ver title="Co je nového">${VERSION_LABEL}</button></div>`;
 let leaveGuard = null;
@@ -309,11 +309,12 @@ async function routeInner() {
   if ((m = h.match(/^#\/b\/([\w-]+)/))) return renderBoard(m[1]);
   if (h === '#/nastaveni') return renderSettings();
   if (h === '#/ucet') return renderAccount();
-  return renderOffers();
+  if (h === '#/nabidky') return renderOffers();
+  return renderHome();
 }
 window.addEventListener('hashchange', route);
 route();
-window.addEventListener('focus', () => { if ((location.hash || '#/') === '#/' && S.me) refreshOffers().catch(() => {}); });
+window.addEventListener('focus', () => { if ((location.hash || '#/') === '#/nabidky' && S.me) refreshOffers().catch(() => {}); });
 
 const setSide = on => { $('#side')?.classList.toggle('open', on); $('#scrim')?.classList.toggle('on', on); };
 // na telefonu se z tabulek dělají přehledné karty: každá buňka dostane popisek z hlavičky sloupce
@@ -326,6 +327,7 @@ function labelTables() {
 }
 { let q = 0; new MutationObserver(() => { if (q) return; q = requestAnimationFrame(() => { q = 0; labelTables(); }); }).observe(document.getElementById('app'), { childList: true, subtree: true }); }
 const NAV_SVG = {
+  home: '<path d="M3.5 11 12 4l8.5 7M6 9.5V20h12V9.5M10 20v-6h4v6"/>',
   offers: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
   orders: '<path d="M2 6h11v10H2zM13 9h5l3 3v4h-8"/><circle cx="6.5" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
   stock: '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/>',
@@ -339,7 +341,7 @@ const NAV_SVG = {
   cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
 };
 const svgIco = k => `<svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_SVG[k] || ''}</svg>`;
-const HB_TITLES = { offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
+const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
 function shell(active, inner) {
   const nav = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ico">${svgIco(key)}</span><span>${label}</span></a>`;
   if (!$('.shell')) {
@@ -370,12 +372,13 @@ function shell(active, inner) {
   }
   $('#hbTitle').textContent = HB_TITLES[active] || 'Vinylor Hub';
   const tab = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ti">${icon}</span><span>${label}</span></a>`;
-  $('#tabbar').innerHTML = `${tab('#/', 'offers', '📄', 'Nabídky')}${tab('#/objednavky', 'orders', '🚚', 'Objednávky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}${tab('#/nastenka', 'boards', '🗂️', 'Nástěnka')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account', 'ct', 'moves'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
+  $('#tabbar').innerHTML = `${tab('#/', 'home', '🏠', 'Přehled')}${tab('#/nabidky', 'offers', '📄', 'Nabídky')}${tab('#/objednavky', 'orders', '🚚', 'Objednávky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account', 'ct', 'moves', 'boards'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
   $('#tbMenu').onclick = () => setSide(true);
   $('#side').innerHTML = `
     <a class="brand" href="#/"><img src="img/icon.png" alt=""><span>Vinylor Hub<small>automatizace</small></span></a>
     <nav class="nav">
-      ${nav('#/', 'offers', '📄', 'Nabídky')}
+      ${nav('#/', 'home', '🏠', 'Přehled')}
+      ${nav('#/nabidky', 'offers', '📄', 'Nabídky')}
       ${nav('#/objednavky', 'orders', '🚚', 'Objednávky')}
       ${nav('#/sklad', 'stock', '📦', 'Naskladnění')}
       ${nav('#/navstevy', 'visits', '🚶', 'Návštěvnost')}
@@ -513,6 +516,94 @@ async function renderMfa() {
   };
 }
 
+// ---------- Přehled: domovská obrazovka ----------
+const ojGoHash = (tab, f = {}) => { OJ.tab = tab; ls.set('vh_oj_tab', tab); Object.assign(OJ, { q: '', card: '', ...f }); location.hash = '#/objednavky'; };
+function offerDonut(list, R = 42) {
+  const n = st => list.filter(o => o.status === st).length;
+  const parts = [['Překlopené', n('confirmed'), 'var(--s-confirmed)'], ['Rozjednané', n('sent') + n('postponed'), 'var(--s-sent)'], ['Zamítnuté', n('rejected'), 'var(--s-draft)']];
+  const tot = parts.reduce((x, p) => x + p[1], 0) || 1; const C = 2 * Math.PI * R; let off = 0;
+  const decided = n('confirmed') + n('rejected'); const rate = decided ? Math.round(100 * n('confirmed') / decided) : null;
+  const arcs = parts.map(([l, v, c]) => { const len = C * v / tot; const el = `<circle cx="50" cy="50" r="${R}" fill="none" stroke="${c}" stroke-width="9" stroke-dasharray="${len.toFixed(1)} ${(C - len).toFixed(1)}" stroke-dashoffset="${(-off).toFixed(1)}" transform="rotate(-90 50 50)"/>`; off += len; return el; }).join('');
+  return `<div class="donut"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="${R}" fill="none" stroke="var(--surface-2)" stroke-width="9"/>${arcs}</svg><div class="donut-c"><b>${rate == null ? '—' : rate + ' %'}</b><small>úspěšnost</small></div></div>
+    <div class="donut-l">${parts.map(([l, v, c]) => `<div><i style="background:${c}"></i><span>${l}</span><b>${Math.round(100 * v / tot)} %</b><em>${v}</em></div>`).join('')}</div>`;
+}
+function lineChart(vals, labels) {
+  const W = 300, H = 90, P = 6; const mx = Math.max(1, ...vals);
+  const pts = vals.map((v, i) => [P + i * (W - 2 * P) / Math.max(1, vals.length - 1), H - P - (v / mx) * (H - 2 * P)]);
+  const d = pts.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join(' ');
+  return `<svg class="lc" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path class="lc-a" d="${d} L${pts[pts.length - 1][0].toFixed(1)} ${H} L${pts[0][0].toFixed(1)} ${H}Z"/><path class="lc-l" d="${d}"/></svg><div class="lc-x">${labels.map(l => `<span>${l}</span>`).join('')}</div>`;
+}
+// nabídky po týdnech za posledních 5 týdnů (podle data nabídky)
+function weekSeries(list, valFn) {
+  const vals = [0, 0, 0, 0, 0], today = new Date(ymd(new Date()) + 'T12:00');
+  list.forEach(o => { const w = Math.floor((today - new Date(String(o.date).slice(0, 10) + 'T12:00')) / (7 * 864e5)); if (w >= 0 && w < 5) vals[4 - w] += valFn(o); });
+  const labels = [4, 3, 2, 1, 0].map(w => { const d = new Date(today - w * 7 * 864e5); return d.getDate() + '. ' + (d.getMonth() + 1) + '.'; });
+  return { vals, labels };
+}
+async function renderHome() {
+  shell('home', `<div class="pg-hello"><h1>${hello()} 👋</h1><p>Tady je přehled toho, co se dnes děje.</p></div><div class="kpis k4">${'<div class="panel kpi"><div class="sk" style="height:50px;width:100%"></div></div>'.repeat(4)}</div>`);
+  const rs = await Promise.allSettled([refreshOffers(true), loadSettings(), loadOj(), loadProducts()]);
+  if (rs[0].status === 'rejected') { $('#main').innerHTML = `<p class="err">${esc(rs[0].reason.message)}</p>`; return; }
+  const okOj = rs[2].status === 'fulfilled' && rs[3].status === 'fulfilled';
+  const base = S.offers.filter(o => !o.archived);
+  const open = base.filter(o => o.status === 'sent' || o.status === 'postponed');
+  const lateO = open.filter(o => (o.status === 'sent' && daysSince(o.statusAt) >= 5) || (o.status === 'postponed' && daysSince(o.statusAt) >= 7));
+  let infos = [], toOrder = [], waiting = [], onWay = [], toStock = [], unpaid = [], overdue = [];
+  if (okOj) {
+    infos = OJ.orders.map(o => ojInfo(o)); const act = infos.filter(i => ojBucket(i) === 'active');
+    toOrder = act.filter(i => i.stage === 'order'); waiting = OJ.aufs.filter(a => a.status === 'sent');
+    const sact = a => (ojSup(a.supplier_id) || {}).active !== false;
+    onWay = OJ.aufs.filter(a => a.status === 'confirmed' && !a.delivered_at && sact(a));
+    toStock = OJ.shipments.filter(x => x.status === 'arrived' && x.lines.some(l => !l.stocked && !l.skip));
+    unpaid = OJ.aufs.filter(a => a.status !== 'draft' && !a.paid_at && sact(a)); overdue = unpaid.filter(a => a.due_at && a.due_at < ymd(new Date()));
+  }
+  const sumTxt = list => { const m = {}; list.forEach(a => { if (a.amount_eur != null) m[a.currency || 'EUR'] = (m[a.currency || 'EUR'] || 0) + Number(a.amount_eur); }); return Object.entries(m).map(([c, n]) => n.toLocaleString('cs-CZ', { maximumFractionDigits: 2 }) + ' ' + ({ USD: '$', CZK: 'Kč' }[c] || '€')).join(' + '); };
+  const bySup = list => { const m = {}; list.forEach(a => { const n = (ojSup(a.supplier_id) || {}).name || '?'; m[n] = (m[n] || 0) + 1; }); return Object.entries(m).map(([k, v]) => `${esc(k)} (${v})`).join(' · '); };
+  const word = (n, a, b, c) => n === 1 ? a : n < 5 ? b : c;
+  const KI = { doc: NAV_SVG.offers, truck: NAV_SVG.orders, ship: NAV_SVG.ct, box: NAV_SVG.stock };
+  const kpi = [['doc', 'var(--s-sent)', 'Rozjednané nabídky', open.length, lateO.length ? `<span class="kpi-pill warn">ozvat se: ${lateO.length}</span>` : '', () => { location.hash = '#/nabidky'; }]];
+  if (okOj) kpi.push(['truck', 'var(--s-sent)', 'K objednání', toOrder.length, '', () => ojGoHash('potreba', { card: 'order', view: 'list' })], ['ship', 'var(--brand)', 'Na cestě', onWay.length, '', () => ojGoHash('aufy', { af: 'confirmed' })], ['box', 'var(--s-confirmed)', 'K naskladnění', toStock.length, '', () => toStock[0] ? (location.hash = '#/svoz/' + toStock[0].id) : ojGoHash('svozy')]);
+  OJ._hk = kpi;
+  const todo = [];
+  if (okOj) {
+    if (waiting.length) todo.push(['truck', 'var(--s-sent)', `${waiting.length} ${word(waiting.length, 'objednávka čeká', 'objednávky čekají', 'objednávek čeká')} na potvrzení`, bySup(waiting), 'Zkontrolovat', () => ojGoHash('aufy', { af: 'sent' }), 1]);
+    if (overdue.length) todo.push(['warn', 'var(--s-rejected)', `${overdue.length} ${word(overdue.length, 'platba po splatnosti', 'platby po splatnosti', 'plateb po splatnosti')}`, `Celkem ${sumTxt(overdue)} · ${bySup(overdue)}`, 'Zobrazit platby', () => ojGoHash('aufy', { af: 'unpaid' }), 0]);
+    else if (unpaid.length) todo.push(['card', 'var(--s-postponed)', `${unpaid.length} ${word(unpaid.length, 'objednávka', 'objednávky', 'objednávek')} k zaplacení`, `Celkem ${sumTxt(unpaid) || 'bez částky'}`, 'Zobrazit', () => ojGoHash('aufy', { af: 'unpaid' }), 1]);
+    if (toStock.length) todo.push(['box', 'var(--s-confirmed)', `${toStock.length} ${word(toStock.length, 'zásilka připravená', 'zásilky připravené', 'zásilek připravených')} k naskladnění`, 'Dorazilo na sklad — zkontroluj a naskladni', 'Naskladnit', () => { location.hash = '#/svoz/' + toStock[0].id; }, 1]);
+    if (toOrder.length) todo.push(['cart', 'var(--s-postponed)', `${toOrder.length} ${word(toOrder.length, 'objednávka', 'objednávky', 'objednávek')} k objednání u dodavatele`, `${toOrder.reduce((x, i) => x + i.todo.length, 0)} položek bez objednávky`, 'Objednat', () => ojGoHash('potreba', { card: 'order', view: 'list' }), 1]);
+  }
+  if (lateO.length) todo.push(['doc', 'var(--s-sent)', `${lateO.length} ${word(lateO.length, 'nabídka', 'nabídky', 'nabídek')} — ozvat se zákazníkovi`, lateO.slice(0, 2).map(o => `${esc(custLabel(o.customer))} · ${daysSince(o.statusAt)} d`).join(' · '), 'Otevřít', () => { S.view = 'over'; location.hash = '#/nabidky'; }, 1]);
+  OJ._ht = todo;
+  const TI = { ...KI, warn: '<path d="M12 4 2.8 20h18.4zM12 10v5M12 17.5v.5"/>', cart: '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2.5 3.5h3l2.2 11h10.6l2-8H6.3"/>', card: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19M6 15h4"/>' };
+  const wk = weekSeries(base, () => 1);
+  $('#main').innerHTML = `
+  <div class="pg-hello"><h1>${hello()} 👋</h1><p>Tady je přehled toho, co se dnes děje.</p></div>
+  <div class="kpis k${kpi.length}">${kpi.map(([ic, c, l, n, extra], i) => `<button class="panel kpi" data-k="${i}" style="--c:${c}"><span class="kpi-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${KI[ic]}</svg></span><span class="kpi-t"><span class="kpi-l">${l}</span><b class="kpi-v">${n}</b>${extra}</span></button>`).join('')}</div>
+  <div class="hg">
+    <section class="panel dash"><div class="dash-h"><svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><b>Co teď udělat</b></div>
+      <div class="dash-b nopad">${todo.length ? todo.map((t, i) => `<div class="td-row"><span class="td-i" style="--c:${t[1]}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${TI[t[0]]}</svg></span><div class="grow"><b>${t[2]}</b><div class="small muted">${t[3]}</div></div><button class="btn ${t[6] ? '' : 'primary'}" data-t="${i}">${t[4]}</button></div>`).join('') : '<div class="td-empty">✅ Všechno vyřízeno — nic nečeká na akci.</div>'}</div></section>
+    <section class="panel dash"><div class="dash-h"><svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 20V10M12 20V4M19 20v-7"/></svg><b>Aktivita nabídek</b></div>
+      <div class="dash-b"><div class="donut-w">${offerDonut(base)}</div><div class="lc-w">${lineChart(wk.vals, wk.labels)}</div><div class="small muted" style="text-align:center">nové nabídky po týdnech</div></div></section>
+    <section class="panel dash"><div class="dash-h"><svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${NAV_SVG.ct}</svg><b>Kontejnery na cestě</b><span class="grow"></span>${hasApp('kontejnery') ? '<a class="dash-lnk" href="#/kontejnery">Všechny →</a>' : ''}</div>
+      <div id="hCt" class="dash-b"><div class="sk" style="height:110px"></div></div></section>
+  </div>
+  ${okOj ? `<section class="panel dash" style="margin-top:16px"><div class="dash-h"><b style="font-size:18px">Objednávky dodavatelů</b><span class="grow"></span><button class="btn sm" id="hBoard">Otevřít nástěnku ›</button><button class="btn primary sm" id="hNew">＋ Nová objednávka</button></div><div class="mini-board">${ojMiniBoard(infos, 2)}</div></section>` : ''}`;
+  $$('.kpi').forEach(b => b.onclick = () => OJ._hk[b.dataset.k][5]());
+  $$('.td-row .btn').forEach(b => b.onclick = () => OJ._ht[b.dataset.t][5]());
+  if (okOj) {
+    $('#hBoard').onclick = () => ojGoHash('potreba', { view: 'board' }); $('#hNew').onclick = () => { ojGoHash('prehled'); };
+    $$('.mb-h, .mb-more').forEach(b => b.onclick = () => ojGoHash('potreba', { view: 'board' }));
+    $$('.mb-card').forEach(c => c.onclick = () => { location.hash = orderHref(c.dataset.o); });
+  }
+  (async () => {
+    try {
+      if (!hasApp('kontejnery')) throw 0;
+      const r = check(await sb.from('ct_containers').select('*').neq('status', 'delivered').order('eta', { ascending: true, nullsFirst: false }).limit(3));
+      if ($('#hCt')) $('#hCt').innerHTML = r.length ? r.map(c => `<a class="rc-row" href="#/k/${c.id}"><span class="rc-i">${svgIco('ct')}</span><div class="grow"><b>${esc(c.number || 'bez čísla')}</b> ${CT_ST[c.status] ? ctBadge(c.status) : ''}<div class="small muted">${esc(c.vessel || '')}</div></div><span class="small nowrap">ETA <b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b></span></a>`).join('') : '<div class="muted small">Žádný kontejner na cestě.</div>';
+    } catch { if ($('#hCt')) $('#hCt').innerHTML = '<div class="muted small">Kontejnery nejsou k dispozici.</div>'; }
+  })();
+}
+
 // ---------- přehled nabídek ----------
 const OFFER_LIST_COLS = 'id,archived,archived_at,number,status,status_at,date,valid_until,customer,created_by,issued_by,updated_at,created_at,note,shoptet_order,net,total,version,offer_comments(count)';
 async function refreshOffers(silent) {
@@ -534,7 +625,7 @@ function filteredOffers() {
   return S.offers.filter(o => {
     if (S.who && o.issuedBy !== S.who && o.createdBy !== S.who) return false;
     if (S.view === 'archive' ? !o.archived : o.archived) return false;
-    if (S.view === 'list' && S.fStatus && o.status !== S.fStatus) return false;
+    if ((S.view === 'list' || S.view === 'over') && S.fStatus && o.status !== S.fStatus) return false;
     if (!q) return true;
     const c = o.customer;
     return fold([o.number, c.name, c.company, c.email, c.phone, c.city, c.ico, o.note, o.shoptetOrder].join(' ')).includes(q);
@@ -549,18 +640,14 @@ function drawOffers() {
   const main = $('#main');
   main.innerHTML = `
   <div class="of-page">
-  <header class="of-bar">
-    <div class="of-title"><h1>Nabídky</h1><span class="of-sub" id="ofSub"></span></div>
-    <div class="of-tools">
-      <div class="search of-search"><span class="ic">⌕</span><input id="q" placeholder="Hledat číslo, zákazníka, IČO, telefon…" value="${esc(S.q)}"><span class="hint-k"><kbd>/</kbd></span></div>
-      <select id="who" class="of-who">
-        <option value="">Všichni</option>
-        ${S.users.map(u => `<option value="${u.id}" ${S.who === u.id ? 'selected' : ''}>${u.id === S.me.id ? 'Moje' : esc(u.name)}</option>`).join('')}
-      </select>
-      <div class="seg of-seg"><i class="seg-thumb"></i><button data-v="board" class="${S.view === 'board' ? 'on' : ''}">Nástěnka</button><button data-v="list" class="${S.view === 'list' ? 'on' : ''}">Seznam</button><button data-v="archive" class="${S.view === 'archive' ? 'on' : ''}">📦 Archiv <span class="muted">${S.offers.filter(o => o.archived).length}</span></button></div>
-      <button class="btn primary of-new" id="newOffer" title="Nová nabídka (N)">＋ Nová nabídka</button>
-    </div>
-  </header>
+  <div class="pg-head"><span class="pg-ico">${svgIco('offers')}</span><div class="grow"><h1>Nabídky</h1><p>Tvorba cenových nabídek, správa stavů a překlopení do Shoptetu. <span class="muted" id="ofSub"></span></p></div>
+    <select id="who" class="of-who">
+      <option value="">Všichni</option>
+      ${S.users.map(u => `<option value="${u.id}" ${S.who === u.id ? 'selected' : ''}>${u.id === S.me.id ? 'Moje' : esc(u.name)}</option>`).join('')}
+    </select>
+    <button class="btn primary of-new" id="newOffer" title="Nová nabídka (N)">＋ Nová nabídka</button></div>
+  <div class="of-tabsrow"><div class="seg of-seg"><i class="seg-thumb"></i><button data-v="over" class="${S.view === 'over' ? 'on' : ''}">Přehled</button><button data-v="board" class="${S.view === 'board' ? 'on' : ''}">Nástěnka</button><button data-v="list" class="${S.view === 'list' ? 'on' : ''}">Seznam</button><button data-v="archive" class="${S.view === 'archive' ? 'on' : ''}">📦 Archiv <span class="muted">${S.offers.filter(o => o.archived).length}</span></button></div>
+    <div class="search of-search grow"><span class="ic">⌕</span><input id="q" placeholder="Hledat číslo, zákazníka, IČO, telefon…" value="${esc(S.q)}"><span class="hint-k"><kbd>/</kbd></span></div></div>
   <div id="stats"></div>
   <div id="ov" class="enter-once"></div>
   </div>`;
@@ -569,7 +656,7 @@ function drawOffers() {
   $('#q').oninput = e => { S.q = e.target.value; drawOffersBody(); };
   $('#who').onchange = e => { S.who = e.target.value; drawStats(); drawOffersBody(); };
   const placeThumb = () => { const seg = $('.of-seg', main), on = $('.seg button.on', main), th = $('.seg-thumb', main); if (!seg || !on || !th) return; th.style.width = on.offsetWidth + 'px'; th.style.transform = `translateX(${on.offsetLeft}px)`; };
-  $$('.seg button', main).forEach(b => b.onclick = () => { S.view = b.dataset.v; if (S.view !== 'archive') ls.set('vh_view', S.view); drawOffersBody(); $$('.seg button', main).forEach(x => x.classList.toggle('on', x === b)); placeThumb(); });
+  $$('.seg button', main).forEach(b => b.onclick = () => { S.view = b.dataset.v; if (S.view !== 'archive') ls.set('vh_view', S.view); drawStats(); drawOffersBody(); $$('.seg button', main).forEach(x => x.classList.toggle('on', x === b)); placeThumb(); });
   requestAnimationFrame(placeThumb); setTimeout(placeThumb, 250);
   setTimeout(() => $('#ov') && $('#ov').classList.remove('enter-once'), 1200);
   drawStats(); drawOffersBody();
@@ -581,46 +668,27 @@ function hello() {
 }
 function drawStats() {
   const el = $('#stats'); if (!el) return;
-  // archivované nabídky se do statistik nepočítají
   const base = S.offers.filter(o => !o.archived);
   const list = S.who ? base.filter(o => o.issuedBy === S.who || o.createdBy === S.who) : base;
+  const sub = $('#ofSub'); if (sub) sub.textContent = `${list.length} ${list.length === 1 ? 'nabídka' : list.length < 5 ? 'nabídky' : 'nabídek'}${S.offers.some(o => o.archived) ? ` · ${S.offers.filter(o => o.archived).length} v archivu` : ''}`;
+  if (S.view !== 'over') { el.innerHTML = ''; return; }
   const open = list.filter(o => o.status === 'sent' || o.status === 'postponed');
-  const month = new Date().toISOString().slice(0, 7);
-  const won = list.filter(o => o.status === 'confirmed' && String(o.statusAt).slice(0, 7) === month);
-  const decided = list.filter(o => o.status === 'confirmed' || o.status === 'rejected');
-  const rate = decided.length ? Math.round(100 * decided.filter(o => o.status === 'confirmed').length / decided.length) : null;
   const late = open.filter(o => (o.status === 'sent' && daysSince(o.statusAt) >= 5) || (o.status === 'postponed' && daysSince(o.statusAt) >= 7));
+  const month = ymd(new Date()).slice(0, 7);
+  const won = list.filter(o => o.status === 'confirmed'); const rej = list.filter(o => o.status === 'rejected');
+  const wonM = won.filter(o => String(o.statusAt).slice(0, 7) === month);
   const sum = a => a.reduce((x, o) => x + o.total, 0);
-  const cnt = st => list.filter(o => o.status === st).length;
-  const total = list.length || 1;
-  const COL = { draft: 'var(--s-draft)', sent: 'var(--s-sent)', postponed: 'var(--s-postponed)', confirmed: 'var(--s-confirmed)', rejected: 'var(--s-rejected)' };
-  const R = 34, C = 2 * Math.PI * R;
-  const sub = $('#ofSub'); if (sub) sub.textContent = `${list.length} ${list.length === 1 ? 'nabídka' : list.length < 5 ? 'nabídky' : 'nabídek'} na nástěnce${S.offers.some(o => o.archived) ? ` · ${S.offers.filter(o => o.archived).length} v archivu` : ''}`;
-  const first = !el.dataset.done; el.dataset.done = '1';
-  el.innerHTML = `<section class="of-hero ${first ? 'first' : 'go'}">
-    <div class="of-aurora" aria-hidden="true"><i></i><i></i><i></i></div>
-    <div class="of-hero-in">
-      <div class="of-hello">${hello()}</div>
-      <div class="of-big"><span class="of-amt" data-n="${sum(open)}">0 Kč</span></div>
-      <div class="of-bigsub">${open.length ? `rozjednáno v ${open.length} ${open.length === 1 ? 'nabídce' : open.length < 5 ? 'nabídkách' : 'nabídkách'} čekajících na zákazníka` : 'právě nic nečeká na zákazníka'}</div>
-      <div class="of-funnel" role="img" aria-label="Poměr nabídek podle stavu">${STATUS_ORDER.map(st => cnt(st) ? `<i style="--w:${(100 * cnt(st) / total).toFixed(2)}%;--c:${COL[st]}" title="${esc(STATUSES[st])}: ${cnt(st)}"></i>` : '').join('')}</div>
-      <div class="of-legend">${STATUS_ORDER.map(st => `<span><b style="background:${COL[st]}"></b>${esc(STATUSES[st])} <em>${cnt(st)}</em></span>`).join('')}</div>
-    </div>
-    <div class="of-widgets">
-      <div class="of-w" style="--c:var(--s-confirmed);--i:0">
-        <div class="of-ring"><svg viewBox="0 0 84 84" aria-hidden="true"><circle class="bg" cx="42" cy="42" r="${R}"/><circle class="fg" cx="42" cy="42" r="${R}" stroke-dasharray="${C.toFixed(1)}" style="--full:${C.toFixed(1)};--to:${(C * (1 - (rate || 0) / 100)).toFixed(1)}"/></svg><b>${rate == null ? '—' : rate + '<small>%</small>'}</b></div>
-        <div class="of-wt"><div class="of-wk">Úspěšnost</div><div class="of-ws">z ${decided.length} rozhodnutých nabídek</div></div>
-      </div>
-      <div class="of-w" style="--c:var(--s-confirmed);--i:1">
-        <div class="of-wt"><div class="of-wk">Potvrzeno tento měsíc</div><div class="of-wv" data-n="${sum(won)}">0 Kč</div><div class="of-ws">🛒 ${won.length} ${won.length === 1 ? 'nabídka překlopena' : won.length < 5 ? 'nabídky překlopeny' : 'nabídek překlopeno'} do Shoptetu</div></div>
-      </div>
-      <div class="of-w ${late.length ? 'warn' : ''}" style="--c:var(--s-postponed);--i:2">
-        <div class="of-wt"><div class="of-wk">Ozvat se zákazníkovi</div><div class="of-wv">${late.length}${late.length ? ' <span class="of-bell">🔔</span>' : ''}</div>
-          <div class="of-ws">${late.length ? late.slice(0, 2).map(o => `${esc(custLabel(o.customer))} · ${daysSince(o.statusAt)} d`).join('<br>') : 'vše v pořádku ✓'}</div></div>
-      </div>
-    </div></section>`;
-  $$('[data-n]', el).forEach(v => tween(v, Number(v.dataset.n), n => M(n).replace(/,\d\d$/, '') + ' Kč'));
-  if (first) requestAnimationFrame(() => requestAnimationFrame(() => el.querySelector('.of-hero')?.classList.add('go')));
+  const wk = weekSeries(list, o => o.total);
+  const since = ymd(new Date(Date.now() - 30 * 864e5)); const v30 = sum(list.filter(o => String(o.date).slice(0, 10) >= since));
+  const IC = { doc: NAV_SVG.offers, ok: '<path d="m5 12.5 4.5 4.5L19 7.5"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>' };
+  const k = (ic, c, v, l, extra = '') => `<div class="panel ostat" style="--c:${c}"><span class="kpi-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[ic]}</svg></span><div><b>${v}</b><span>${l}</span>${extra}</div></div>`;
+  el.innerHTML = `<div class="of-strip">
+    ${k('doc', 'var(--s-sent)', open.length, 'Rozjednané', late.length ? `<em class="kpi-pill warn">ozvat se: ${late.length}</em>` : '')}
+    ${k('ok', 'var(--s-confirmed)', won.length, 'Překlopené', wonM.length ? `<em class="kpi-pill ok">tento měsíc ${wonM.length}</em>` : '')}
+    ${k('x', 'var(--s-rejected)', rej.length, 'Zamítnuté')}
+    <div class="panel ostat donut-card">${offerDonut(list, 40)}</div>
+    <div class="panel ostat chart-card"><div class="cc-h"><span>Hodnota nabídek (30 dní)</span><b>${M(v30).replace(/,\d\d$/, '')} Kč</b></div>${lineChart(wk.vals, wk.labels)}</div>
+  </div>`;
 }
 async function changeStatus(o, status) {
   const args = { p_id: o.id, p_status: status, p_shoptet_order: null };
@@ -652,12 +720,21 @@ function drawOffersBody(movedId) {
   }
   if (S.view === 'list') return drawList(ov, list);
   if (S.view === 'archive') return drawArchive(ov, list);
+  if (S.view === 'over') {
+    ov.innerHTML = `<div id="obB"></div><section class="panel dash" style="margin-top:18px"><div class="dash-h"><b style="font-size:18px">Všechny nabídky</b><span class="cnt-pill">${list.length}</span></div><div id="obL" class="dash-b"></div></section>`;
+    drawOfferBoard($('#obB', ov), list, movedId, 3); drawList($('#obL', ov), list); return;
+  }
+  drawOfferBoard(ov, list, movedId, 0);
+}
+function drawOfferBoard(ov, list, movedId, cap) {
   ov.innerHTML = `<div class="board">${STATUS_ORDER.map(s => {
-    const cards = list.filter(o => o.status === s).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    const sum = cards.reduce((a, o) => a + o.total, 0);
+    const all = list.filter(o => o.status === s).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const cards = cap ? all.slice(0, cap) : all;
+    const sum = all.reduce((a, o) => a + o.total, 0);
     return `<section class="col" data-s="${s}" data-drop="${s}">
-      <div class="col-h">${esc(STATUSES[s])} <span class="cnt">${cards.length}</span>${cards.length && (s === 'confirmed' || s === 'rejected') ? `<button class="colarch" data-arch="${s}" title="Archivovat všechny nabídky v tomto sloupci">📦</button>` : ''}<span class="sum">${cards.length ? M(sum).replace(/,\d\d$/, '') + ' Kč' : ''}</span></div>
+      <div class="col-h">${esc(STATUSES[s])} <span class="cnt">${all.length}</span>${all.length && (s === 'confirmed' || s === 'rejected') ? `<button class="colarch" data-arch="${s}" title="Archivovat všechny nabídky v tomto sloupci">📦</button>` : ''}<span class="sum">${all.length ? M(sum).replace(/,\d\d$/, '') + ' Kč' : ''}</span></div>
       <div class="col-body">${cards.map((o, i) => card(o, i, o.id === movedId)).join('') || `<div class="empty">${esc(STATUS_HINT[s])}</div>`}</div>
+      ${cap && all.length > cap ? `<button class="mb-more" data-more>+ ${all.length - cap} dalších</button>` : ''}
       ${cards.length > 6 ? `<div class="col-more">↓ dalších ${cards.length - 6} — posuň v sloupci, starší dej do archivu 📦</div>` : ''}
     </section>`;
   }).join('')}</div>`;
@@ -667,6 +744,7 @@ function drawOffersBody(movedId) {
     c.ondragend = () => c.classList.remove('dragging');
   });
   limitCols(ov);
+  $$('[data-more]', ov).forEach(b => b.onclick = () => { const t = $('.seg button[data-v="board"]'); if (t) t.click(); });
   $$('.archbtn', ov).forEach(b => b.onclick = e => { e.stopPropagation(); archiveOffers([b.closest('.card').dataset.id], true); });
   $$('.colarch', ov).forEach(b => b.onclick = async e => {
     e.stopPropagation();
@@ -770,7 +848,7 @@ function drawList(ov, list) {
 }
 document.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || $('.backdrop')) return;
-  if ((location.hash || '#/') !== '#/') return;
+  if ((location.hash || '#/') !== '#/nabidky') return;
   if (e.key === '/') { e.preventDefault(); $('#q')?.focus(); }
   if (e.key === 'n' || e.key === 'N') { e.preventDefault(); $('#newOffer')?.click(); }
 });
@@ -792,7 +870,7 @@ async function renderEditor(id) {
       loadSettings(),
     ]);
     o = fromRow(row); comments = cm; history = hi;
-  } catch (e) { $('#main').innerHTML = `<div class="panel empty-big"><div class="ill">🔍</div><h3>Nabídku se nepodařilo otevřít</h3><p>${esc(e.message)}</p><a class="btn" href="#/">← Zpět na nabídky</a></div>`; return; }
+  } catch (e) { $('#main').innerHTML = `<div class="panel empty-big"><div class="ill">🔍</div><h3>Nabídku se nepodařilo otevřít</h3><p>${esc(e.message)}</p><a class="btn" href="#/nabidky">← Zpět na nabídky</a></div>`; return; }
   loadProducts().catch(e => toast('Produkty: ' + e.message, true));
 
   const E = { dirty: false, saving: null, timer: null };
@@ -804,7 +882,7 @@ async function renderEditor(id) {
 
   $('#main').innerHTML = `
   <div class="ed-top" id="edTop"><div class="topbar">
-    <a class="btn ghost" href="#/" title="Zpět na nabídky">←</a>
+    <a class="btn ghost" href="#/nabidky" title="Zpět na nabídky">←</a>
     <h1>Nabídka <span class="num-t">${esc(o.number)}</span></h1>
     <span id="stBadge">${stat(o.status)}</span>
     <span class="save" id="saveState">Uloženo</span>
@@ -1377,7 +1455,7 @@ async function renderEditor(id) {
     try {
       E.dirty = false; clearTimeout(E.timer);
       check(await sb.from('offers').update({ deleted: true }).eq('id', o.id));
-      leaveGuard = null; cleanup(); toast('Nabídka smazána'); location.hash = '#/';
+      leaveGuard = null; cleanup(); toast('Nabídka smazána'); location.hash = '#/nabidky';
     } catch (err) { toast(err.message, true); }
   };
 
@@ -1630,7 +1708,7 @@ async function renderAccount() {
       try { await sb.rpc('hub_log', { p_action: 'password_changed', p_detail: {} }); } catch {}
       await loadUsers();
       toast('Heslo změněno ✓'); e.target.reset();
-      location.hash = '#/';
+      location.hash = '#/nabidky';
     } catch (err) { toast(err.message, true); }
     btn.disabled = false; btn.textContent = 'Změnit heslo';
   };
@@ -2431,6 +2509,20 @@ async function ojCopyRows(rows, title) {
 }
 // ---------- záložka Přehled: co teď udělat + co je na cestě ----------
 function ojGo(tab, f = {}) { OJ.tab = tab; ls.set('vh_oj_tab', tab); Object.assign(OJ, { q: '', card: '', ...f }); drawOj(); window.scrollTo(0, 0); }
+function ojMiniBoard(infos, n) {
+  const act = infos.filter(i => ojBucket(i) === 'active');
+  const mini = (st, n) => {
+    const L = act.filter(i => i.stage === st); if (st === 'delivered') L.push(...infos.filter(i => i.stage === 'delivered' && !i.o.archived));
+    const show = L.slice(0, n);
+    return `<div class="mb-col" data-st="${st}"><div class="mb-h" data-go="${st}">${esc(OJ_STAGE[st][0])} <span class="mb-n">${L.length}</span></div>
+      ${show.map(i => { const a = i.aufs[0]; const sup = (i.sups[0] || (a && ojSup(a.supplier_id)) || {}).name || '';
+        return `<div class="mb-card" data-o="${esc(i.o.code)}"><div class="mb-top">${sup ? `<span class="mb-sup">${esc(sup)}</span>` : '<span></span>'}${a && a.auf_number ? `<small>${esc(a.auf_number)}</small>` : ''}</div>
+        <b>${esc(i.o.customer || i.o.ref || i.o.code)}</b><div class="small muted">${esc(i.o.code)} · ${i.items.length} ${i.items.length === 1 ? 'položka' : i.items.length < 5 ? 'položky' : 'položek'}${a && a.amount_eur != null ? ' · ' + fmtAmt(a) : ''}</div>
+        ${a && a.paid_at ? `<span class="mb-ok">✓ Zaplaceno ${czDate(a.paid_at)}</span>` : a && a.expected_at ? `<span class="mb-eta">📅 ETA ${czDate(a.expected_at)}</span>` : ''}</div>`; }).join('') || '<div class="mb-empty">—</div>'}
+      ${L.length > n ? `<button class="mb-more" data-go="${st}">+ ${L.length - n} dalších</button>` : ''}</div>`;
+  };
+  return ['order', 'ordered', 'transit', 'delivered'].map(st => mini(st, n)).join('');
+}
 async function ojOverviewExtra(el) {
   const alive = () => $('#ojBody') === el && $('#ovRc');
   const put = (id, html) => { if (alive() && $(id)) $(id).innerHTML = html; };
@@ -2482,16 +2574,6 @@ function drawOjOverview(infos) {
   ];
   OJ._kpi = kpi;
   const KI = { cart: '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2.5 3.5h3l2.2 11h10.6l2-8H6.3"/>', truck: NAV_SVG.orders, ship: NAV_SVG.ct, box: NAV_SVG.stock, card: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19M6 15h4"/>' };
-  const mini = (st, n) => {
-    const L = act.filter(i => i.stage === st); if (st === 'delivered') L.push(...infos.filter(i => i.stage === 'delivered' && !i.o.archived));
-    const show = L.slice(0, n);
-    return `<div class="mb-col" data-st="${st}"><div class="mb-h" data-go="${st}">${esc(OJ_STAGE[st][0])} <span class="mb-n">${L.length}</span></div>
-      ${show.map(i => { const a = i.aufs[0]; const sup = (i.sups[0] || (a && ojSup(a.supplier_id)) || {}).name || '';
-        return `<div class="mb-card" data-o="${esc(i.o.code)}"><div class="mb-top">${sup ? `<span class="mb-sup">${esc(sup)}</span>` : '<span></span>'}${a && a.auf_number ? `<small>${esc(a.auf_number)}</small>` : ''}</div>
-        <b>${esc(i.o.customer || i.o.ref || i.o.code)}</b><div class="small muted">${esc(i.o.code)} · ${i.items.length} ${i.items.length === 1 ? 'položka' : i.items.length < 5 ? 'položky' : 'položek'}${a && a.amount_eur != null ? ' · ' + fmtAmt(a) : ''}</div>
-        ${a && a.paid_at ? `<span class="mb-ok">✓ Zaplaceno ${czDate(a.paid_at)}</span>` : a && a.expected_at ? `<span class="mb-eta">📅 ETA ${czDate(a.expected_at)}</span>` : ''}</div>`; }).join('') || '<div class="mb-empty">—</div>'}
-      ${L.length > n ? `<button class="mb-more" data-go="${st}">+ ${L.length - n} dalších</button>` : ''}</div>`;
-  };
   const stageOf = a => a.delivered_at ? 'Doručeno' : a.status === 'confirmed' ? OJ_STAGE.transit[0] : OJ_STAGE.ordered[0];
   const stClass = a => a.delivered_at ? 'ok' : a.status === 'confirmed' ? 'go' : 'wait';
   const lastAufs = OJ.aufs.filter(a => a.status !== 'draft').sort((x, y) => String(y.created_at || '').localeCompare(String(x.created_at || ''))).slice(0, 5);
@@ -2501,7 +2583,7 @@ function drawOjOverview(infos) {
   <div class="ovg">
     <div class="ov-main">
       <section class="panel dash"><div class="dash-h">${svgIco('boards')}<b>Nástěnka objednávek</b><span class="grow"></span><button class="btn sm" id="ovBoard">Otevřít nástěnku ›</button></div>
-        <div class="mini-board">${['order', 'ordered', 'transit', 'delivered'].map(st => mini(st, 2)).join('')}</div></section>
+        <div class="mini-board">${ojMiniBoard(infos, 2)}</div></section>
       <div class="ov-two">
         <section class="panel dash"><div class="dash-h">${svgIco('stock')}<b>Naskladnění (příjemky)</b><span class="grow"></span><a class="btn sm primary" href="#/sklad">＋ Nová příjemka</a></div><div id="ovRc" class="dash-b"><div class="sk" style="height:90px"></div></div><a class="dash-f" href="#/sklad">Zobrazit příjemky →</a></section>
         <section class="panel dash"><div class="dash-h">${svgIco('ct')}<b>Kontejnery</b><span class="grow"></span>${hasApp('kontejnery') ? '<a class="btn sm primary" href="#/kontejnery">Otevřít</a>' : ''}</div><div id="ovCt" class="dash-b"><div class="sk" style="height:90px"></div></div><a class="dash-f" href="#/kontejnery">Zobrazit všechny kontejnery →</a></section>
