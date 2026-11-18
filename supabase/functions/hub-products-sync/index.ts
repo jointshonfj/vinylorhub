@@ -61,6 +61,8 @@ async function runSync(sb: any, minGapMs: number) {
   const col = (n: string) => headers.indexOf(n);
   const iCode = col('code'), iName = col('name'), iPrice = col('price');
   if (iCode < 0 || iName < 0 || iPrice < 0) return fail('V CSV chybí sloupce code / name / price.');
+  // výchozí kategorie produktu (sloupec „Výchozí kategorie“ v exportu; jako záloha „Kategorie“)
+  const iCat = (() => { const a = headers.findIndex(h => /^defaultcategory$/i.test(h)); if (a >= 0) return a; return headers.findIndex(h => /^categor/i.test(h)); })();
   const iVar = headers.map((h, i) => (h.startsWith('variant:') ? i : -1)).filter(i => i >= 0);
   const get = (r: string[], n: string) => { const i = col(n); return i >= 0 ? String(r[i] ?? '').trim() : ''; };
 
@@ -77,6 +79,7 @@ async function runSync(sb: any, minGapMs: number) {
       name: String(r[iName] ?? '').trim(),
       variant: iVar.map(i => String(r[i] ?? '').trim()).filter(Boolean).join(' / '),
       supplier: get(r, 'supplier'),
+      category: iCat >= 0 ? String(r[iCat] ?? '').trim().slice(0, 200) : '',
       price_vat: num(r[iPrice]) ?? 0,
       standard_price: num(get(r, 'standardPrice')),
       action_price: num(get(r, 'actionPrice')),

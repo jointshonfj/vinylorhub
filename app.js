@@ -206,7 +206,7 @@ async function loadUsers() {
 }
 async function loadProducts(force) {
   if (S.products && !force) return S.products;
-  const rows = await fetchAll(() => sb.from('hub_products').select('code,name,variant,supplier,price_vat,action_price,visible,ean,mpn,manufacturer,keywords').order('code'));
+  const rows = await fetchAll(() => sb.from('hub_products').select('code,name,variant,supplier,price_vat,action_price,visible,ean,mpn,manufacturer,keywords,category').order('code'));
   S.products = rows.map(p => ({ ...p, priceVat: Number(p.price_vat), actionPrice: p.action_price == null ? null : Number(p.action_price), fcode: fold(p.code), text: fold(`${p.code} ${p.name} ${p.variant} ${p.supplier} ${p.ean || ''} ${p.mpn || ''} ${p.manufacturer || ''} ${p.keywords || ''}`) }));
   return S.products;
 }
@@ -622,7 +622,7 @@ const INV_STEPS = ['draft', 'counting', 'review', 'done'];
 // hranice: u konkrétního produktu (ručně) nebo pravidlem pro skupinu (výrobce, dodavatel, část názvu, začátek kódu)
 // =====================================================================
 const ZS = { rules: [], watch: [], levels: new Map(), sales: [], cfg: { horizon_days: 30, window_days: 60 }, loaded: false, tab: 'alerts', q: '', st: 'all', sup: '', pq: '', syncing: '' };
-const ZS_KIND = { manufacturer: 'Výrobce', supplier: 'Dodavatel', name: 'Název obsahuje', prefix: 'Kód začíná' };
+const ZS_KIND = { category: 'Kategorie', manufacturer: 'Výrobce', supplier: 'Dodavatel', name: 'Název obsahuje', prefix: 'Kód začíná' };
 const ZS_ST = { out: ['Došlo', 'bad'], low: ['Pod hranicí', 'bad'], soon: ['Brzy dojde', 'wait'], ok: ['V pořádku', 'ok'], nodata: ['Bez dat', ''] };
 const ZS_ORD = { out: 0, low: 1, soon: 2, ok: 3, nodata: 4 };
 async function zsCall(body) {
@@ -643,7 +643,9 @@ async function zsLoad() {
   ]);
   Object.assign(ZS, { rules, watch, levels: new Map(lv.map(x => [x.code, Number(x.stock)])), sales, loaded: true });
 }
-const zsRuleHit = (r, p) => { const v = fold(r.value).trim(); if (!v) return false; return r.kind === 'manufacturer' ? fold(p.manufacturer).trim() === v : r.kind === 'supplier' ? fold(p.supplier).trim() === v : r.kind === 'name' ? fold(p.name).includes(v) : fold(p.code).startsWith(v); };
+// kategorie: shoduje se přesně, nebo je produkt v podkategorii („Podlahy“ zahrne i „Podlahy > Vinyl“)
+const zsCatHit = (cat, val) => { const c = fold(cat).trim(), v = fold(val).trim(); return !!v && !!c && (c === v || (c.startsWith(v) && /^\s*[>\/|»]/.test(c.slice(v.length)))); };
+const zsRuleHit = (r, p) => { const v = fold(r.value).trim(); if (!v) return false; if (r.kind === 'category') return zsCatHit(p.category, r.value); return r.kind === 'manufacturer' ? fold(p.manufacturer).trim() === v : r.kind === 'supplier' ? fold(p.supplier).trim() === v : r.kind === 'name' ? fold(p.name).includes(v) : fold(p.code).startsWith(v); };
 // všechny sledované produkty s vypočteným stavem
 function zsRows() {
   const W = ZS.cfg.window_days, H = ZS.cfg.horizon_days;
@@ -666,7 +668,7 @@ function zsRows() {
   return { rows: out, ignored };
 }
 const zsDays = d => d == null ? '—' : d < 1 ? 'dnes' : d > 999 ? '999+' : Math.round(d) + ' d';
-const zsRow = (r, withSrc) => `<tr class="click" data-c="${esc(r.code)}"><td><span class="stp ${ZS_ST[r.st][1]}">${ZS_ST[r.st][0]}</span></td><td><b>${esc(r.code)}</b><div class="small muted">${esc(r.p.name)}${r.p.variant ? ' · ' + esc(r.p.variant) : ''}</div></td>
+const zsRow = (r, withSrc) => `<tr class="click" data-c="${esc(r.code)}"><td><span class="stp ${ZS_ST[r.st][1]}">${ZS_ST[r.st][0]}</span></td><td><b>${esc(r.code)}</b><div class="small muted">${esc(r.p.name)}${r.p.variant ? ' · ' + esc(r.p.variant) : ''}${r.p.category ? ' · <span title="Výchozí kategorie">' + esc(r.p.category.split(/\s*[>\/|»]\s*/).pop()) + '</span>' : ''}</div></td>
   <td class="r nowrap"><b>${r.stock == null ? '—' : fmtQ(r.stock)}</b></td><td class="r nowrap">${r.min == null ? '<span class="muted">—</span>' : fmtQ(r.min)}</td><td class="r nowrap">${r.avg ? fmtQ(Math.round(r.avg * 100) / 100) : '<span class="muted">0</span>'}</td><td class="r nowrap">${zsDays(r.days)}</td>
   ${withSrc ? `<td class="small muted">${esc(r.src)}</td>` : `<td class="r nowrap">${r.need ? `<b>${fmtQ(r.need)}</b>` : '<span class="muted">—</span>'}</td><td class="small">${esc(r.p.supplier || '')}</td>`}</tr>`;
 async function renderZasoby() {
@@ -799,16 +801,16 @@ async function zsAddProduct() {
 }
 async function zsRuleDlg(rule) {
   const prods = S.products || [];
-  const mans = [...new Set(prods.map(p => p.manufacturer).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'cs')), sups = [...new Set(prods.map(p => p.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'cs'));
+  const cats = [...new Set(prods.map(p => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'cs')); const mans = [...new Set(prods.map(p => p.manufacturer).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'cs')), sups = [...new Set(prods.map(p => p.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'cs'));
   const done = modal({ title: rule ? 'Upravit pravidlo' : 'Nové pravidlo', body: `<label>Skupina produktů</label><select data-k="kind">${Object.entries(ZS_KIND).map(([k, l]) => `<option value="${k}" ${rule && rule.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
-    <label>Hodnota</label><input data-k="val" list="zsDl" value="${rule ? esc(rule.value) : ''}" placeholder="např. Gunreben nebo click"><datalist id="zsDl"></datalist>
-    <div class="small muted" id="zsHit" style="margin-top:6px"></div>
+    <label>Hodnota</label><input data-k="val" list="zsDl" value="${rule ? esc(rule.value) : ''}" placeholder="např. kategorie, Gunreben nebo click"><datalist id="zsDl"></datalist>
+    <div class="small muted" id="zsHit" style="margin-top:6px"></div><div class="small" id="zsCatHint" style="margin-top:6px;color:var(--warn-fg)"></div>
     <label>Hranice pro každý produkt ve skupině</label><input data-k="min" type="number" step="any" min="0" value="${rule ? rule.min_qty : ''}" placeholder="např. 100">
     <label>Poznámka (nepovinné)</label><input data-k="note" value="${rule ? esc(rule.note) : ''}">`, focus: '[data-k="val"]',
     actions: [{ label: 'Zrušit', value: null }, { label: 'Uložit', cls: 'primary', value: bd => ({ kind: $('[data-k="kind"]', bd).value, value: $('[data-k="val"]', bd).value.trim(), min: $('[data-k="min"]', bd).value.trim(), note: $('[data-k="note"]', bd).value.trim() }) }] });
   setTimeout(() => {
     const bd = $$('.backdrop').pop(); if (!bd) return; const k = $('[data-k="kind"]', bd), val = $('[data-k="val"]', bd);
-    const upd = () => { $('#zsDl', bd).innerHTML = (k.value === 'manufacturer' ? mans : k.value === 'supplier' ? sups : []).map(x => `<option value="${esc(x)}">`).join(''); const n = val.value.trim() ? prods.filter(p => zsRuleHit({ kind: k.value, value: val.value }, p)).length : 0; $('#zsHit', bd).textContent = val.value.trim() ? `Odpovídá ${n} produktů.` : ''; };
+    const upd = () => { $('#zsDl', bd).innerHTML = (k.value === 'category' ? cats : k.value === 'manufacturer' ? mans : k.value === 'supplier' ? sups : []).map(x => `<option value="${esc(x)}">`).join(''); const n = val.value.trim() ? prods.filter(p => zsRuleHit({ kind: k.value, value: val.value }, p)).length : 0; $('#zsHit', bd).textContent = val.value.trim() ? `Odpovídá ${n} produktů.` : ''; $('#zsCatHint', bd).textContent = k.value === 'category' && !cats.length ? 'Kategorie produktů zatím nejsou načtené. V Shoptetu přidej do CSV exportu produktů sloupec „Výchozí kategorie“ a pak v Nastavení klikni na „Načíst produkty teď“.' : ''; };
     k.onchange = upd; val.oninput = upd; upd();
   }, 40);
   const v = await done; if (!v) return;
@@ -2910,6 +2912,8 @@ const fmtEur = n => n == null || n === '' ? '—' : Number(n).toLocaleString('cs
 const unitCz = u => ({ m2: 'm²', '': 'ks' })[u] ?? u;
 const ojSup = id => OJ.suppliers.find(s => s.id === id);
 // počítá se jen zboží od sledovaných dodavatelů (Nastavení → Objednávky); ručně přidané položky vždy
+// řádek se neobjednává, když je tak označený, nebo je produkt „nesledovat“ — výslovné „Objednávat“ a ručně přidané řádky ale přebijí nastavení produktu
+const ojItemSkipped = i => i.decision === 'skip' || (i.decision !== 'order' && !i.manual && !!(OJ.products[i.code] || {}).skip);
 const ojRelevant = i => { if (i.manual) return true; const pr = OJ.products[i.code] || {}; const sp = ojSup(pr.supplier_id); if (sp) return sp.active !== false; return !!(S.settings && S.settings.data && S.settings.data.ojShowUnassigned === '1'); };
 const ojActiveSups = () => OJ.suppliers.filter(x => x.active !== false);
 const ojFlag = cc => cc && /^[A-Z]{2}$/.test(cc) ? String.fromCodePoint(...[...cc].map(c => 127397 + c.charCodeAt(0))) : '🌍';
@@ -2965,7 +2969,7 @@ async function ojSync(silent) {
 // ---------- odvozený stav objednávky ----------
 function ojInfo(o, sid) {
   const items = OJ.items.filter(i => i.order_code === o.code && (!sid || (OJ.products[i.code] || {}).supplier_id === sid));
-  const orderable = items.filter(i => i.decision !== 'skip' && !(OJ.products[i.code] || {}).skip && ojRelevant(i));
+  const orderable = items.filter(i => !ojItemSkipped(i) && ojRelevant(i));
   const todo = orderable.filter(i => !i.auf_id);
   const aufs = OJ.aufs.filter(a => a.order_code === o.code && (!sid || a.supplier_id === sid));
   let stage;
@@ -3725,11 +3729,11 @@ async function renderOjOrder(code) {
         <div><label>Stav ve Shoptetu</label><div>${esc(o.shoptet_status) || (o.manual ? 'ruční objednávka' : '—')}</div></div>
         <div><label>Číslo nabídky / reference</label><input id="oRef" value="${esc(o.ref || '')}" placeholder="např. 26900021 nebo jméno zákazníka"></div>
         <div style="grid-column:1/-1"><label>Poznámka</label><input id="oNote" value="${esc(o.note)}" placeholder="např. objednáno jen 18 balení, zbytek máme skladem"></div></div>
-      ${order_.map(sid => { const s = ojSup(sid); const its = grp.get(sid); const todo = its.filter(i => i.decision !== 'skip' && !i.auf_id && !(OJ.products[i.code] || {}).skip);
+      ${order_.map(sid => { const s = ojSup(sid); const its = grp.get(sid); const todo = its.filter(i => !ojItemSkipped(i) && !i.auf_id);
         return `<div class="panel" style="margin-bottom:14px;overflow-x:auto"><div style="display:flex;gap:10px;align-items:center;padding:12px 14px;flex-wrap:wrap"><b style="font-size:15px">${s ? ojSupLabel(s) : '⚠ Bez dodavatele'}</b><span class="grow"></span>
           ${s && todo.length ? `<button class="btn primary sm" data-mail="${sid}">✉ Objednat u dodavatele (${todo.length})</button>` : ''}</div>
           <table class="list"><thead><tr><th>Kód</th><th>Produkt</th><th class="r">Množství</th><th style="width:170px">Dodavatel</th><th>Stav</th><th></th></tr></thead><tbody>
-          ${its.map(i => { const skip = i.decision === 'skip' || (OJ.products[i.code] || {}).skip; const a = OJ.aufs.find(x => x.id === i.auf_id);
+          ${its.map(i => { const skip = ojItemSkipped(i); const a = OJ.aufs.find(x => x.id === i.auf_id);
             return `<tr class="${skip ? 'muted' : ''}"><td class="nowrap"><b>${esc(i.code)}</b></td><td>${esc(i.name)}</td>
               <td class="r nowrap">${i.auf_id ? `<b>${fmtQ(i.qty)}</b>` : `<input type="number" step="any" min="0" data-qty="${esc(i.key)}" value="${i.qty}" style="width:90px;text-align:right">`} ${esc(unitCz(i.unit))}</td>
               <td><select data-sup="${esc(i.code)}" ${i.auf_id ? 'disabled' : ''}>${supOptions((OJ.products[i.code] || {}).supplier_id)}</select></td>
@@ -3850,7 +3854,7 @@ async function ojPickProducts(code, reload) {
 }
 async function ojOrderMail(code, sid, reload) {
   const o = OJ.orders.find(x => x.code === code); const sup = ojSup(sid); const inf = ojInfo(o);
-  const todo = inf.items.filter(i => i.decision !== 'skip' && !i.auf_id && !(OJ.products[i.code] || {}).skip && (OJ.products[i.code] || {}).supplier_id === sid);
+  const todo = inf.items.filter(i => !ojItemSkipped(i) && !i.auf_id && (OJ.products[i.code] || {}).supplier_id === sid);
   if (!todo.length) return toast('Není co objednávat.', true);
   if (!(await ojFillMissing(todo, sup))) return;
   const lines = todo.map(i => { const pr = OJ.products[i.code] || {}; return { key: i.key, ourCode: i.code, code: pr.supplier_code || '', name: pr.supplier_name || '', csName: i.name, qty: Number(i.qty), unit: unitCz(i.unit) }; });
