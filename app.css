@@ -1654,3 +1654,8 @@ table.list tr.click:hover td { background: var(--hover); }
 @media (max-width: 820px) { .ns-bar { top: 52px; } .oj-bar select, .oj-bar .oj-q { max-width: none; flex: 1 1 100%; } }
 .ns-bar #nsPush { white-space: normal; }
 @media (max-width: 820px) { .ns-bar #nsPush { flex: 1 1 100%; } .ns-ph .btn { flex: none; } .ns-bar { position: static; } }
+
+
+/* ===== v0.34 — Zásoby ===== */
+.stp.mute { background: var(--surface-2); color: var(--muted); }
+#zsTabs .chip.on .tag { background: color-mix(in srgb, var(--nav-on-ink) 22%, transparent); color: var(--nav-on-ink); }

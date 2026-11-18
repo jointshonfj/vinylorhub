@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.33.0';
+export const APP_VERSION = '0.34.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.34.0', d: '2026-11-18', t: ['Nová aplikace Zásoby: hlídání minimálních zásob — hranice u konkrétního produktu nebo pravidlem pro skupinu (výrobce, dodavatel, část názvu, začátek kódu)', 'Upozornění „došlo / pod hranicí / brzy dojde“ podle aktuálního skladu ze Shoptetu a průměrného prodeje z objednávek, s doporučeným množstvím k doobjednání a kopírováním seznamu do Excelu', 'Karta „Zásoby ke sledování“ na úvodní stránce'] },
   { v: '0.33.0', d: '2026-11-18', t: ['Objednávky: nahoře jen Přehled, Nástěnka, Naskladnění, Potvrzení, Svozy, Produkty a Dodavatelé; dodavatelé a „Na sklad“ přešli do filtru', 'Nový společný filtr nad nástěnkou i seznamem: hledání, dodavatel, druh objednávky, platba, tlačítko Zrušit filtry', 'Nová záložka Naskladnění: fronta doručeného zboží (přesunuto do „Doručeno“) — vybereš balíky, upravíš počty, vyřadíš řádky a ručně pošleš do Shoptetu', 'Přehled a upozornění na nástěnce odkazují na frontu Naskladnění'] },
   { v: '0.32.0', d: '2026-11-18', t: ['Jednotný vzhled celé aplikace: stejné záhlaví stránek (ikona, nadpis, popis) v Naskladnění, Kontejnerech, Historii pohybů, Návštěvnosti, Nástěnce, Nastavení i Účtu', 'Hlavní tlačítka tmavě modrá, kulaté filtry, karty statistik, panely, tabulky a okna ve stejném stylu jako Přehled a Nabídky; písmo bez technického „mono“ vzhledu'] },
   { v: '0.31.0', d: '2026-11-18', t: ['Nová aplikace Inventura: dílčí inventury (vybereš zboží, spočítáš, zkontroluješ rozdíly) a roční celoskladová inventura s kontrolním seznamem a přehledem, co ještě zbývá naskladnit', 'Počítání: rychlé zadání kódu / EAN (i skenerem), slepé počítání bez stavu v systému, umístění (regál / zóna), tisk počítacích soupisů, export CSV', 'Schválení: po kontrole se napočtený fyzický stav nastaví ve Shoptetu (jen po potvrzení, každá položka nejvýš jednou); pohyby jsou v Historii pohybů'] },

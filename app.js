@@ -299,6 +299,7 @@ async function routeInner() {
   if ((m = h.match(/^#\/s\/([\w-]+)/))) return renderReceipt(m[1]);
   if (h === '#/sklad') return renderStock();
   if (h === '#/pohyby') return renderMoves();
+  if (h === '#/zasoby') return renderZasoby();
   if (h === '#/inventura') return renderInvList();
   if ((m = h.match(/^#\/inventura\/([\w-]+)/))) return renderInvDetail(m[1]);
   if (h === '#/svozy' || h === '#/objednavky') return renderOj();
@@ -332,6 +333,7 @@ const NAV_SVG = {
   home: '<path d="M3.5 11 12 4l8.5 7M6 9.5V20h12V9.5M10 20v-6h4v6"/>',
   offers: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
   orders: '<path d="M2 6h11v10H2zM13 9h5l3 3v4h-8"/><circle cx="6.5" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
+  zs: '<path d="M4 20V9M10 20V4M16 20v-8M22 20H2"/><path d="m14 6 3-3 3 3"/>',
   inv: '<rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4h6v3H9zM9 14l2 2 4-4"/>',
   stock: '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/>',
   visits: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.4"/><path d="M17 14.2c2.4.3 4 2.2 4 4.8"/>',
@@ -345,7 +347,7 @@ const NAV_SVG = {
 };
 const svgIco = k => `<svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_SVG[k] || ''}</svg>`;
 const pgHead = (key, title, sub = '', right = '') => `<div class="pg-head"><span class="pg-ico">${svgIco(key)}</span><div class="grow"><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div>${right}</div>`;
-const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', inv: 'Inventura', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
+const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', inv: 'Inventura', zs: 'Zásoby', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
 function shell(active, inner) {
   const nav = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ico">${svgIco(key)}</span><span>${label}</span></a>`;
   if (!$('.shell')) {
@@ -386,6 +388,7 @@ function shell(active, inner) {
       ${nav('#/objednavky', 'orders', '🚚', 'Objednávky')}
       ${nav('#/sklad', 'stock', '📦', 'Naskladnění')}
       ${nav('#/inventura', 'inv', '📋', 'Inventura')}
+      ${nav('#/zasoby', 'zs', '📈', 'Zásoby')}
       ${nav('#/navstevy', 'visits', '🚶', 'Návštěvnost')}
       ${nav('#/nastenka', 'boards', '🗂️', 'Nástěnka')}
       ${hasApp('kontejnery') ? nav('#/kontejnery', 'ct', '🚢', 'Kontejnery') : '<a class="soon" href="#" title="Zatím jen pro vybrané uživatele"><span class="ico">🚢</span><span>Kontejnery</span><em>🔒</em></a>'}
@@ -592,6 +595,7 @@ async function renderHome() {
     <section class="panel dash"><div class="dash-h"><svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${NAV_SVG.ct}</svg><b>Kontejnery na cestě</b><span class="grow"></span>${hasApp('kontejnery') ? '<a class="dash-lnk" href="#/kontejnery">Všechny →</a>' : ''}</div>
       <div id="hCt" class="dash-b"><div class="sk" style="height:110px"></div></div></section>
   </div>
+  <section class="panel dash" style="margin-top:16px"><div class="dash-h">${svgIco('zs')}<b>Zásoby ke sledování</b><span class="grow"></span><a class="dash-lnk" href="#/zasoby">Otevřít Zásoby ›</a></div><div id="hZs" class="dash-b"><div class="sk" style="height:70px"></div></div></section>
   ${okOj ? `<section class="panel dash" style="margin-top:16px"><div class="dash-h"><b style="font-size:18px">Objednávky dodavatelů</b><span class="grow"></span><button class="btn sm" id="hBoard">Otevřít nástěnku ›</button><button class="btn primary sm" id="hNew">＋ Nová objednávka</button></div><div class="mini-board">${ojMiniBoard(infos, 2)}</div></section>` : ''}`;
   $$('.kpi').forEach(b => b.onclick = () => OJ._hk[b.dataset.k][5]());
   $$('.td-row .btn').forEach(b => b.onclick = () => OJ._ht[b.dataset.t][5]());
@@ -607,11 +611,226 @@ async function renderHome() {
       if ($('#hCt')) $('#hCt').innerHTML = r.length ? r.map(c => `<a class="rc-row" href="#/k/${c.id}"><span class="rc-i">${svgIco('ct')}</span><div class="grow"><b>${esc(c.number || 'bez čísla')}</b> ${CT_ST[c.status] ? ctBadge(c.status) : ''}<div class="small muted">${esc(c.vessel || '')}</div></div><span class="small nowrap">ETA <b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b></span></a>`).join('') : '<div class="muted small">Žádný kontejner na cestě.</div>';
     } catch { if ($('#hCt')) $('#hCt').innerHTML = '<div class="muted small">Kontejnery nejsou k dispozici.</div>'; }
   })();
+  zsHomeCard();
 }
 
 // ---------- Inventura ----------
 const INV_ST = { draft: ['Příprava', 'draft'], counting: ['Počítá se', 'sent'], review: ['Ke schválení', 'postponed'], done: ['Uzavřeno', 'confirmed'] };
 const INV_STEPS = ['draft', 'counting', 'review', 'done'];
+// =====================================================================
+// ZÁSOBY: hlídání minimálních zásob — co je pod hranicí, co brzy dojde a co doobjednat
+// hranice: u konkrétního produktu (ručně) nebo pravidlem pro skupinu (výrobce, dodavatel, část názvu, začátek kódu)
+// =====================================================================
+const ZS = { rules: [], watch: [], levels: new Map(), sales: [], cfg: { horizon_days: 30, window_days: 60 }, loaded: false, tab: 'alerts', q: '', st: 'all', sup: '', pq: '', syncing: '' };
+const ZS_KIND = { manufacturer: 'Výrobce', supplier: 'Dodavatel', name: 'Název obsahuje', prefix: 'Kód začíná' };
+const ZS_ST = { out: ['Došlo', 'bad'], low: ['Pod hranicí', 'bad'], soon: ['Brzy dojde', 'wait'], ok: ['V pořádku', 'ok'], nodata: ['Bez dat', ''] };
+const ZS_ORD = { out: 0, low: 1, soon: 2, ok: 3, nodata: 4 };
+async function zsCall(body) {
+  const { data, error } = await sb.functions.invoke('hub-stock', { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch {} throw new Error(msg); }
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+async function zsLoad() {
+  const c = await sb.from('stk_config').select('*').eq('id', 1).maybeSingle();
+  if (c.data) ZS.cfg = c.data;
+  const since = ymd(new Date(Date.now() - ZS.cfg.window_days * 864e5));
+  const [rules, watch, lv, sales] = await Promise.all([
+    fetchAll(() => sb.from('stk_rules').select('*').order('created_at')),
+    fetchAll(() => sb.from('stk_watch').select('*')),
+    fetchAll(() => sb.from('stk_levels').select('code,stock')),
+    fetchAll(() => sb.from('stk_sales').select('code,qty,sold_at').gte('sold_at', since)),
+  ]);
+  Object.assign(ZS, { rules, watch, levels: new Map(lv.map(x => [x.code, Number(x.stock)])), sales, loaded: true });
+}
+const zsRuleHit = (r, p) => { const v = fold(r.value).trim(); if (!v) return false; return r.kind === 'manufacturer' ? fold(p.manufacturer).trim() === v : r.kind === 'supplier' ? fold(p.supplier).trim() === v : r.kind === 'name' ? fold(p.name).includes(v) : fold(p.code).startsWith(v); };
+// všechny sledované produkty s vypočteným stavem
+function zsRows() {
+  const W = ZS.cfg.window_days, H = ZS.cfg.horizon_days;
+  const sold = new Map(); for (const x of ZS.sales) sold.set(x.code, (sold.get(x.code) || 0) + Number(x.qty));
+  const watch = new Map(ZS.watch.map(w => [w.code, w]));
+  const out = []; const ignored = [];
+  for (const pr of S.products || []) {
+    const w = watch.get(pr.code);
+    if (w && w.mode === 'ignore') { ignored.push(pr); continue; }
+    let rule = null; for (const r of ZS.rules) if (zsRuleHit(r, pr) && (!rule || Number(r.min_qty) > Number(rule.min_qty))) rule = r;
+    if (!w && !rule) continue;
+    const min = w && w.min_qty != null ? Number(w.min_qty) : rule ? Number(rule.min_qty) : null;
+    const stock = ZS.levels.has(pr.code) ? ZS.levels.get(pr.code) : null;
+    const avg = (sold.get(pr.code) || 0) / W; const days = avg > 0 && stock != null ? Math.max(0, stock) / avg : null;
+    const st = stock == null ? 'nodata' : stock <= 0 ? 'out' : min != null && stock <= min ? 'low' : days != null && days <= H ? 'soon' : 'ok';
+    const need = stock == null || st === 'ok' ? 0 : Math.max(0, Math.ceil((min || 0) + avg * H - stock));
+    out.push({ p: pr, code: pr.code, stock, min, avg, days, st, need, src: w && w.min_qty != null ? 'ručně' : rule ? `pravidlo: ${ZS_KIND[rule.kind].toLowerCase()} „${rule.value}“` : 'ručně', manual: !!w, rule });
+  }
+  out.sort((a, b) => ZS_ORD[a.st] - ZS_ORD[b.st] || (a.days ?? 1e9) - (b.days ?? 1e9) || a.code.localeCompare(b.code));
+  return { rows: out, ignored };
+}
+const zsDays = d => d == null ? '—' : d < 1 ? 'dnes' : d > 999 ? '999+' : Math.round(d) + ' d';
+const zsRow = (r, withSrc) => `<tr class="click" data-c="${esc(r.code)}"><td><span class="stp ${ZS_ST[r.st][1]}">${ZS_ST[r.st][0]}</span></td><td><b>${esc(r.code)}</b><div class="small muted">${esc(r.p.name)}${r.p.variant ? ' · ' + esc(r.p.variant) : ''}</div></td>
+  <td class="r nowrap"><b>${r.stock == null ? '—' : fmtQ(r.stock)}</b></td><td class="r nowrap">${r.min == null ? '<span class="muted">—</span>' : fmtQ(r.min)}</td><td class="r nowrap">${r.avg ? fmtQ(Math.round(r.avg * 100) / 100) : '<span class="muted">0</span>'}</td><td class="r nowrap">${zsDays(r.days)}</td>
+  ${withSrc ? `<td class="small muted">${esc(r.src)}</td>` : `<td class="r nowrap">${r.need ? `<b>${fmtQ(r.need)}</b>` : '<span class="muted">—</span>'}</td><td class="small">${esc(r.p.supplier || '')}</td>`}</tr>`;
+async function renderZasoby() {
+  shell('zs', `${pgHead('zs', 'Zásoby', 'Hlídání minimálních zásob a co brzy doobjednat.')}<div class="panel panel-b"><div class="sk" style="height:220px"></div></div>`);
+  try { await Promise.all([loadSettings(), loadProducts(), zsLoad()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  drawZasoby();
+}
+function drawZasoby() {
+  if (location.hash !== '#/zasoby') return;
+  const { rows, ignored } = zsRows(); const bad = rows.filter(r => ['out', 'low'].includes(r.st)), soon = rows.filter(r => r.st === 'soon');
+  const alerts = rows.filter(r => ['out', 'low', 'soon'].includes(r.st));
+  const last = ZS.cfg.stock_synced_at; const noData = !ZS.levels.size;
+  const sups = [...new Set(rows.map(r => r.p.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'cs'));
+  const stat = (k, v, sub, c) => `<div class="panel stat" style="--c:${c}"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`;
+  const tabs = [['alerts', 'Upozornění', alerts.length], ['watch', 'Sledované produkty', rows.length], ['rules', 'Pravidla', ZS.rules.length]];
+  const q = fold(ZS.q).trim();
+  const flt = list => list.filter(r => (!ZS.sup || r.p.supplier === ZS.sup) && (!q || fold(r.code + ' ' + r.p.name + ' ' + (r.p.supplier || '')).includes(q)) && (ZS.st === 'all' || r.st === ZS.st));
+  let body = '';
+  if (ZS.tab === 'alerts') {
+    const list = flt(alerts);
+    body = `<div class="oj-bar"><div class="search oj-q"><span class="ic">⌕</span><input id="zsq" placeholder="Hledat kód, název, dodavatele…" value="${esc(ZS.q)}"></div>
+      <div class="chips" id="zsF">${[['all', 'Vše'], ['out', 'Došlo'], ['low', 'Pod hranicí'], ['soon', 'Brzy dojde']].map(([k, l]) => `<button class="chip ${ZS.st === k ? 'on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
+      <select id="zsSup" class="of-who"><option value="">Všichni dodavatelé</option>${sups.map(x => `<option ${x === ZS.sup ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select><span class="grow"></span><button class="btn" id="zsCopy">📋 Kopírovat seznam</button></div>
+      <div class="panel" style="overflow-x:auto">${list.length ? `<table class="list"><thead><tr><th>Stav</th><th>Produkt</th><th class="r">Skladem</th><th class="r">Hranice</th><th class="r" title="Průměrný prodej za den v posledních ${ZS.cfg.window_days} dnech">Prodej/den</th><th class="r" title="Za jak dlouho dojde při tomto tempu">Vystačí</th><th class="r" title="Hranice + prodej za ${ZS.cfg.horizon_days} dní − sklad">Doobjednat</th><th>Dodavatel</th></tr></thead><tbody>${list.slice(0, 300).map(r => zsRow(r)).join('')}</tbody></table>`
+        : `<div class="empty-big"><div class="ill">${noData ? '📡' : '✅'}</div><h3>${noData ? 'Zatím nejsou načtené zásoby' : rows.length ? 'Nic nehrozí' : 'Zatím nic nesledujete'}</h3><p>${noData ? 'Klikni nahoře na „Aktualizovat ze Shoptetu“ — stáhne aktuální stavy skladu a prodeje.' : rows.length ? 'Žádný sledovaný produkt není pod hranicí ani blízko vyprodání.' : 'Přidej pravidlo pro skupinu produktů nebo konkrétní produkt v záložce Sledované produkty / Pravidla.'}</p></div>`}</div>
+      ${list.length > 300 ? `<p class="muted small">Zobrazeno prvních 300 z ${list.length} — zúži filtr.</p>` : ''}`;
+  } else if (ZS.tab === 'watch') {
+    const list = rows.filter(r => !q || fold(r.code + ' ' + r.p.name + ' ' + (r.p.supplier || '')).includes(q));
+    body = `<div class="oj-bar"><div class="search oj-q"><span class="ic">⌕</span><input id="zsq" placeholder="Hledat mezi sledovanými…" value="${esc(ZS.q)}"></div><span class="grow"></span><button class="btn primary of-new" id="zsAdd">＋ Přidat produkt</button></div>
+      <div class="panel" style="overflow-x:auto">${list.length ? `<table class="list"><thead><tr><th>Stav</th><th>Produkt</th><th class="r">Skladem</th><th class="r">Hranice</th><th class="r">Prodej/den</th><th class="r">Vystačí</th><th>Zdroj hranice</th></tr></thead><tbody>${list.slice(0, 400).map(r => zsRow(r, true)).join('')}</tbody></table>` : '<div class="empty-big"><div class="ill">📈</div><h3>Nic nesledujete</h3><p>Přidej produkt tlačítkem nahoře, nebo vytvoř pravidlo pro celou skupinu.</p></div>'}</div>
+      ${ignored.length ? `<details class="panel panel-b ns-skipped"><summary>Vyřazeno ze sledování (${ignored.length})</summary>${ignored.slice(0, 100).map(x => `<div class="ns-sk"><div class="grow"><b>${esc(x.code)}</b> <span class="muted small">${esc(x.name)}</span></div><button class="btn sm" data-unign="${esc(x.code)}">Vrátit</button></div>`).join('')}</details>` : ''}`;
+  } else {
+    const cnt = r => (S.products || []).filter(p => zsRuleHit(r, p)).length;
+    body = `<div class="oj-bar"><span class="grow"></span><button class="btn primary of-new" id="zsNewRule">＋ Nové pravidlo</button></div>
+      <div class="panel" style="overflow-x:auto;margin-bottom:16px">${ZS.rules.length ? `<table class="list"><thead><tr><th>Skupina produktů</th><th class="r">Hranice</th><th class="r">Produktů</th><th>Poznámka</th><th></th></tr></thead><tbody>${ZS.rules.map(r => `<tr data-r="${r.id}"><td><span class="tag blue">${ZS_KIND[r.kind]}</span> <b>${esc(r.value)}</b></td><td class="r nowrap"><b>${fmtQ(r.min_qty)}</b></td><td class="r">${cnt(r)}</td><td class="small muted">${esc(r.note)}</td><td class="r nowrap"><button class="btn sm" data-redit="${r.id}">Upravit</button> <button class="btn sm danger" data-rdel="${r.id}">✕</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty-big"><div class="ill">🧩</div><h3>Zatím žádné pravidlo</h3><p>Pravidlo nastaví hranici najednou celé skupině — například všem produktům výrobce, od jednoho dodavatele nebo s „click“ v názvu. U konkrétního produktu ji pak můžeš přebít.</p></div>'}</div>
+      <div class="panel panel-b"><b>Předpověď</b><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:10px">
+        <div><label>Upozornit, když zásoba vystačí na méně než (dní)</label><input type="number" min="1" max="365" id="zsH" value="${ZS.cfg.horizon_days}"></div>
+        <div><label>Průměrný prodej počítat z posledních (dní)</label><input type="number" min="7" max="180" id="zsW" value="${ZS.cfg.window_days}"></div></div>
+        <p class="muted small" style="margin:10px 0 0">Doporučené množství k objednání = hranice + očekávaný prodej za zadaný počet dní − aktuální sklad. Po změně počtu dní pro průměr klikni na „Aktualizovat ze Shoptetu“.</p><button class="btn" id="zsCfg" style="margin-top:10px">Uložit nastavení</button></div>`;
+  }
+  $('#main').innerHTML = `${pgHead('zs', 'Zásoby', 'Hlídání minimálních zásob a co brzy doobjednat.', `<span class="muted small" id="zsLast">${last ? 'zásoby: ' + ago(last) : 'zatím nenačteno'}</span><button class="btn" id="zsSync">↻ Aktualizovat ze Shoptetu</button>`)}
+  <div class="stats">${stat('Došlo / pod hranicí', bad.length, bad.length ? 'zkontroluj a doobjednej' : 'nic nechybí', 'var(--s-rejected)')}${stat('Brzy dojde', soon.length, `vystačí na < ${ZS.cfg.horizon_days} dní`, 'var(--s-postponed)')}${stat('Sledováno', rows.length, ZS.rules.length ? `${ZS.rules.length} ${ZS.rules.length === 1 ? 'pravidlo' : 'pravidel'} + ruční` : 'ručně vybrané', 'var(--s-confirmed)')}${stat('Prodeje z', ZS.cfg.window_days + ' dní', ZS.cfg.sales_synced_at ? 'aktualizováno ' + ago(ZS.cfg.sales_synced_at) : 'zatím nenačteno', 'var(--brand)')}</div>
+  <div class="chips" id="zsTabs" style="margin-bottom:14px">${tabs.map(([k, l, n]) => `<button class="chip ${ZS.tab === k ? 'on' : ''}" data-t="${k}">${l}${n ? ` <span class="tag ${k === 'alerts' ? '' : 'grey'}">${n}</span>` : ''}</button>`).join('')}</div>${body}`;
+  zsBind(rows);
+}
+function zsBind(rows) {
+  $$('#zsTabs .chip').forEach(c => c.onclick = () => { ZS.tab = c.dataset.t; ZS.q = ''; ZS.st = 'all'; drawZasoby(); });
+  $('#zsSync').onclick = zsSync;
+  const q = $('#zsq'); if (q) q.oninput = e => { ZS.q = e.target.value; const pos = e.target.selectionStart; drawZasoby(); const n = $('#zsq'); n.focus(); n.setSelectionRange(pos, pos); };
+  $$('#zsF .chip').forEach(c => c.onclick = () => { ZS.st = c.dataset.f; drawZasoby(); });
+  if ($('#zsSup')) $('#zsSup').onchange = e => { ZS.sup = e.target.value; drawZasoby(); };
+  $$('tr.click[data-c]').forEach(t => t.onclick = () => zsEdit(t.dataset.c));
+  if ($('#zsCopy')) $('#zsCopy').onclick = () => {
+    const qq = fold(ZS.q).trim(); const list = rows.filter(r => ['out', 'low', 'soon'].includes(r.st) && (!ZS.sup || r.p.supplier === ZS.sup) && (!qq || fold(r.code + ' ' + r.p.name).includes(qq)) && (ZS.st === 'all' || r.st === ZS.st));
+    if (!list.length) return toast('Není co kopírovat.', true);
+    const txt = ['Kód\tNázev\tDodavatel\tSkladem\tHranice\tDoobjednat', ...list.map(r => [r.code, r.p.name, r.p.supplier || '', r.stock ?? '', r.min ?? '', r.need || ''].join('\t'))].join('\n');
+    navigator.clipboard.writeText(txt).then(() => toast(`Zkopírováno ${list.length} řádků (vlož do Excelu) ✓`), () => toast('Kopírování se nepovedlo.', true));
+  };
+  if ($('#zsAdd')) $('#zsAdd').onclick = zsAddProduct;
+  $$('[data-unign]').forEach(b => b.onclick = async () => { try { check(await sb.from('stk_watch').delete().eq('code', b.dataset.unign)); await zsLoad(); drawZasoby(); } catch (e) { toast(e.message, true); } });
+  if ($('#zsNewRule')) $('#zsNewRule').onclick = () => zsRuleDlg();
+  $$('[data-redit]').forEach(b => b.onclick = () => zsRuleDlg(ZS.rules.find(r => r.id === b.dataset.redit)));
+  $$('[data-rdel]').forEach(b => b.onclick = async () => {
+    const r = ZS.rules.find(x => x.id === b.dataset.rdel); if (!(await confirmBox('Smazat pravidlo?', `Pravidlo „${ZS_KIND[r.kind]}: ${r.value}“ zmizí. Produkty s vlastní hranicí zůstanou sledované.`, { ok: 'Smazat', danger: true }))) return;
+    try { check(await sb.from('stk_rules').delete().eq('id', r.id)); await zsLoad(); drawZasoby(); } catch (e) { toast(e.message, true); }
+  });
+  if ($('#zsCfg')) $('#zsCfg').onclick = async () => {
+    const h = Math.round(toNum($('#zsH').value)), w = Math.round(toNum($('#zsW').value));
+    if (!(h >= 1 && h <= 365 && w >= 7 && w <= 180)) return toast('Dny upozornění 1–365, dny pro průměr 7–180.', true);
+    try { check(await sb.from('stk_config').update({ horizon_days: h, window_days: w }).eq('id', 1)); await zsLoad(); drawZasoby(); toast('Uloženo ✓'); } catch (e) { toast(e.message, true); }
+  };
+}
+async function zsSync() {
+  if (ZS.syncing) return; ZS.syncing = '1'; const btn = $('#zsSync'); const set = t => { const b = $('#zsSync'); if (b) { b.disabled = true; b.innerHTML = `<span class="spin"></span> ${t}`; } };
+  const stockId = Number(cfg().shoptetStockId) || 1; let msg = ''; let warn = false;
+  try {
+    set('Načítám zásoby…');
+    const r = await zsCall({ action: 'stock_sync', stockId });
+    if (r.ok === false) { warn = true; msg = (r.error || 'Zásoby se nepodařilo načíst.') + (r.sampleKeys && r.sampleKeys.length ? ' Pole v odpovědi: ' + r.sampleKeys.join(', ') : ''); }
+    else msg = `Zásoby: ${r.saved} produktů`;
+    let rem = 1, guard = 0, orders = 0;
+    while (rem > 0 && guard++ < 60) {
+      set(guard === 1 ? 'Načítám prodeje…' : `Načítám prodeje… zbývá ${rem}`);
+      const s = await zsCall({ action: 'sales_sync', days: ZS.cfg.window_days, batch: 40 });
+      if (s.ok === false) { warn = true; msg += (msg ? ' · ' : '') + s.error; break; }
+      rem = s.remaining || 0; orders += s.processed || 0;
+    }
+    if (!warn) msg += ` · nové objednávky: ${orders}`;
+    await zsLoad();
+  } catch (e) { warn = true; msg = e.message; }
+  ZS.syncing = ''; drawZasoby(); if (btn) toast(msg || 'Hotovo', warn);
+}
+async function zsEdit(code) {
+  const r = zsRows().rows.find(x => x.code === code); const pr = (S.products || []).find(x => x.code === code); if (!pr) return;
+  const w = ZS.watch.find(x => x.code === code);
+  const v = await modal({ title: pr.code, body: `<p class="muted small">${esc(pr.name)}${pr.variant ? ' · ' + esc(pr.variant) : ''}</p>
+    <div class="ns-sk" style="border:0;padding:0"><div>Skladem: <b>${r && r.stock != null ? fmtQ(r.stock) : '—'}</b></div><div>Prodej/den: <b>${r ? fmtQ(Math.round(r.avg * 100) / 100) : '—'}</b></div><div>Vystačí: <b>${r ? zsDays(r.days) : '—'}</b></div></div>
+    <label>Vlastní hranice pro tento produkt${r && r.rule ? ` <span class="muted small">(prázdné = z pravidla: ${fmtQ(r.rule.min_qty)})</span>` : ''}</label><input data-k="min" type="number" step="any" min="0" value="${w && w.min_qty != null ? w.min_qty : ''}" placeholder="${r && r.rule ? fmtQ(r.rule.min_qty) : 'např. 100'}">
+    <label class="chk" style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" data-k="ign"> Nesledovat tento produkt</label>`, focus: '[data-k="min"]',
+    actions: [{ label: 'Zrušit', value: null }, { label: 'Uložit', cls: 'primary', value: bd => ({ min: $('[data-k="min"]', bd).value.trim(), ign: $('[data-k="ign"]', bd).checked }) }] });
+  if (!v) return;
+  try {
+    if (v.ign) check(await sb.from('stk_watch').upsert({ code, mode: 'ignore', min_qty: null, updated_at: nowIso() }, { onConflict: 'code' }));
+    else if (v.min !== '') { const m = toNum(v.min); if (!(m >= 0)) return toast('Hranice musí být číslo.', true); check(await sb.from('stk_watch').upsert({ code, mode: 'watch', min_qty: m, updated_at: nowIso() }, { onConflict: 'code' })); }
+    else if (r && r.rule) check(await sb.from('stk_watch').delete().eq('code', code));
+    else check(await sb.from('stk_watch').upsert({ code, mode: 'watch', min_qty: null, updated_at: nowIso() }, { onConflict: 'code' }));
+    await zsLoad(); drawZasoby(); toast('Uloženo ✓');
+  } catch (e) { toast(e.message, true); }
+}
+async function zsAddProduct() {
+  let pick = null;
+  const done = modal({ title: 'Přidat produkt ke sledování', body: `<label>Hledat produkt (kód, název, EAN…)</label><input id="zsPq" placeholder="např. carrara click 6mm"><div id="zsPr" style="max-height:240px;overflow:auto;margin-top:8px"></div>
+    <div id="zsPk" class="small" style="margin:10px 0 0"></div><label>Hranice (minimální zásoba)</label><input data-k="min" type="number" step="any" min="0" placeholder="např. 100">`, focus: '#zsPq',
+    actions: [{ label: 'Zrušit', value: null }, { label: 'Přidat', cls: 'primary', value: bd => pick ? { code: pick.code, min: $('[data-k="min"]', bd).value.trim() } : null }] });
+  setTimeout(() => {
+    const bd = $$('.backdrop').pop(); if (!bd) return; const inp = $('#zsPq', bd);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') e.stopPropagation(); });
+    inp.oninput = () => {
+      const res = searchProducts(inp.value, true).slice(0, 12);
+      $('#zsPr', bd).innerHTML = res.map(x => `<button type="button" class="btn sm" data-p="${esc(x.code)}" style="display:block;width:100%;text-align:left;margin:3px 0"><b>${esc(x.code)}</b> ${esc(x.name)}${x.variant ? ' · ' + esc(x.variant) : ''}</button>`).join('') || '<div class="muted small">Nic nenalezeno.</div>';
+      $$('[data-p]', bd).forEach(b => b.onclick = () => { pick = res.find(x => x.code === b.dataset.p); $('#zsPk', bd).innerHTML = `Vybráno: <b>${esc(pick.code)}</b> ${esc(pick.name)}`; $('[data-k="min"]', bd).focus(); });
+    };
+  }, 40);
+  const v = await done; if (!v) return;
+  try {
+    const m = v.min === '' ? null : toNum(v.min); if (m != null && !(m >= 0)) return toast('Hranice musí být číslo.', true);
+    check(await sb.from('stk_watch').upsert({ code: v.code, mode: 'watch', min_qty: m, updated_at: nowIso() }, { onConflict: 'code' }));
+    await zsLoad(); ZS.tab = 'watch'; drawZasoby(); toast('Přidáno ke sledování ✓');
+  } catch (e) { toast(e.message, true); }
+}
+async function zsRuleDlg(rule) {
+  const prods = S.products || [];
+  const mans = [...new Set(prods.map(p => p.manufacturer).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'cs')), sups = [...new Set(prods.map(p => p.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'cs'));
+  const done = modal({ title: rule ? 'Upravit pravidlo' : 'Nové pravidlo', body: `<label>Skupina produktů</label><select data-k="kind">${Object.entries(ZS_KIND).map(([k, l]) => `<option value="${k}" ${rule && rule.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <label>Hodnota</label><input data-k="val" list="zsDl" value="${rule ? esc(rule.value) : ''}" placeholder="např. Gunreben nebo click"><datalist id="zsDl"></datalist>
+    <div class="small muted" id="zsHit" style="margin-top:6px"></div>
+    <label>Hranice pro každý produkt ve skupině</label><input data-k="min" type="number" step="any" min="0" value="${rule ? rule.min_qty : ''}" placeholder="např. 100">
+    <label>Poznámka (nepovinné)</label><input data-k="note" value="${rule ? esc(rule.note) : ''}">`, focus: '[data-k="val"]',
+    actions: [{ label: 'Zrušit', value: null }, { label: 'Uložit', cls: 'primary', value: bd => ({ kind: $('[data-k="kind"]', bd).value, value: $('[data-k="val"]', bd).value.trim(), min: $('[data-k="min"]', bd).value.trim(), note: $('[data-k="note"]', bd).value.trim() }) }] });
+  setTimeout(() => {
+    const bd = $$('.backdrop').pop(); if (!bd) return; const k = $('[data-k="kind"]', bd), val = $('[data-k="val"]', bd);
+    const upd = () => { $('#zsDl', bd).innerHTML = (k.value === 'manufacturer' ? mans : k.value === 'supplier' ? sups : []).map(x => `<option value="${esc(x)}">`).join(''); const n = val.value.trim() ? prods.filter(p => zsRuleHit({ kind: k.value, value: val.value }, p)).length : 0; $('#zsHit', bd).textContent = val.value.trim() ? `Odpovídá ${n} produktů.` : ''; };
+    k.onchange = upd; val.oninput = upd; upd();
+  }, 40);
+  const v = await done; if (!v) return;
+  const m = toNum(v.min); if (!v.value || v.min === '' || !(m >= 0)) return toast('Vyplň hodnotu a hranici (číslo).', true);
+  try {
+    const row = { kind: v.kind, value: v.value, min_qty: m, note: v.note };
+    if (rule) check(await sb.from('stk_rules').update(row).eq('id', rule.id)); else check(await sb.from('stk_rules').insert(row));
+    await zsLoad(); ZS.tab = 'rules'; drawZasoby(); toast('Pravidlo uloženo ✓');
+  } catch (e) { toast(e.message, true); }
+}
+// karta na úvodní stránce
+async function zsHomeCard() {
+  const put = h => { if ($('#hZs')) $('#hZs').innerHTML = h; };
+  try {
+    await Promise.all([loadProducts(), zsLoad()]);
+    const { rows } = zsRows(); const al = rows.filter(r => ['out', 'low', 'soon'].includes(r.st));
+    if (!rows.length) return put('<div class="muted small" style="padding:4px 2px">Zatím nic nesledujete. <a href="#/zasoby"><u>Nastavit hranice</u></a></div>');
+    if (!ZS.levels.size) return put('<div class="muted small" style="padding:4px 2px">Zásoby ještě nejsou načtené — <a href="#/zasoby"><u>aktualizuj je v Zásobách</u></a>.</div>');
+    if (!al.length) return put(`<div class="muted small" style="padding:4px 2px">✅ Všech ${rows.length} sledovaných produktů má dost zásob.</div>`);
+    put(al.slice(0, 5).map(r => `<a class="rc-row" href="#/zasoby"><span class="stp ${ZS_ST[r.st][1]}">${ZS_ST[r.st][0]}</span><div class="grow"><b>${esc(r.code)}</b> <span class="small muted">${esc(r.p.name)}</span></div><span class="small nowrap">skladem <b>${fmtQ(r.stock)}</b>${r.need ? ` · doobjednat <b>${fmtQ(r.need)}</b>` : ''}</span></a>`).join('') + (al.length > 5 ? `<div class="small muted" style="padding:6px 2px">+ ${al.length - 5} dalších v Zásobách</div>` : ''));
+  } catch { put('<div class="muted small">Zásoby nejsou k dispozici.</div>'); }
+}
 const INV_KIND = { partial: 'Dílčí inventura', annual: 'Roční inventura' };
 const INV_CHECK = ['Naskladnit všechny příjemky a svozy, které dorazily', 'Zpracovat kontejnery, které už dorazily na sklad', 'Domluvit pauzu v příjmu a expedici na dobu počítání', 'Vyřadit poškozené a rozbalené zboží, ať je to zvlášť', 'Rozdělit sklad na zóny / regály a určit počítací dvojice', 'Načíst aktuální stav skladu ze Shoptetu a vyexportovat ho (záloha)', 'Vytisknout počítací soupisy', 'Určit termín a informovat tým'];
 const INV = { ses: null, items: [], q: '', f: 'all', limit: 200, showSys: false, plus: false };
