@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.35.0';
+export const APP_VERSION = '0.35.1';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.35.1', d: '2026-11-18', t: ['Rozvozy fungují i bez klíčů Mapy.com: mapa na OpenStreetMap, adresy přes OpenStreetMap a trasa přes náhradní službu; klíče jsou nepovinné a stačí klíč pro mapu'] },
   { v: '0.35.0', d: '2026-11-18', t: ['Nová aplikace Rozvozy (převzatá ze starého Apps Scriptu): objednávky k rozvozu na mapě Mapy.com, doporučené oblasti do 35 km, filtr podle stavu, výběr zastávek, optimalizace pořadí, trasa od skladu s délkou a časem, otevření v Mapy.com / navigace', 'Objednávky se načítají z CSV exportu ze Shoptetu tlačítkem „Načíst ze Shoptetu“; propojení a klíče nastavuje správce v „⚙ Propojení“'] },
   { v: '0.34.1', d: '2026-11-18', t: ['Zásoby: pravidla podle výchozí kategorie produktu (včetně podkategorií); kategorie se načítá z CSV exportu produktů ze Shoptetu', 'Oprava objednávek: tlačítko „Objednávat“ u řádku teď funguje i u produktů označených „nesledovat“ v záložce Produkty; ručně přidané řádky se neblokují nikdy'] },
   { v: '0.34.0', d: '2026-11-18', t: ['Nová aplikace Zásoby: hlídání minimálních zásob — hranice u konkrétního produktu nebo pravidlem pro skupinu (výrobce, dodavatel, část názvu, začátek kódu)', 'Upozornění „došlo / pod hranicí / brzy dojde“ podle aktuálního skladu ze Shoptetu a průměrného prodeje z objednávek, s doporučeným množstvím k doobjednání a kopírováním seznamu do Excelu', 'Karta „Zásoby ke sledování“ na úvodní stránce'] },

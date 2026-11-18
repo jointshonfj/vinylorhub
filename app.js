@@ -890,13 +890,13 @@ function drawRozvozy() {
   if (RZ.map) { try { RZ.map.remove(); } catch {} RZ.map = null; }
   const admin = S.me && S.me.role === 'admin'; const c = RZ.cfg || {};
   const head = pgHead('rz', 'Rozvozy', 'Plánování rozvozů objednávek na mapě — oblasti, výběr zastávek a trasa.', `<span class="muted small" id="rzLast">${c.syncedAt ? 'Shoptet: ' + ago(c.syncedAt) : 'zatím nenačteno'}</span>${c.hasCsv ? '<button class="btn" id="rzSync">↻ Načíst ze Shoptetu</button>' : ''}${admin ? '<button class="btn" id="rzCfg">⚙ Propojení</button>' : ''}`);
-  if (!c.hasCsv || !c.tileKey) {
-    $('#main').innerHTML = `${head}<div class="panel empty-big"><div class="ill">🗺️</div><h3>Rozvozy ještě nejsou propojené</h3><p>${admin ? 'Zadej odkaz na CSV export objednávek ze Shoptetu a klíče Mapy.com. Najdeš je ve starém Apps Scriptu: Nastavení projektu → Vlastnosti skriptu (<code>SHOPTET_EXPORT_URL</code>, <code>MAPY_TILE_API_KEY</code>, <code>MAPY_API_KEY_SERVER</code>).' : 'Propojení musí nejdřív nastavit správce.'}</p>${admin ? '<button class="btn primary" id="rzCfg2">⚙ Nastavit propojení</button>' : ''}</div>`;
+  if (!c.hasCsv) {
+    $('#main').innerHTML = `${head}<div class="panel empty-big"><div class="ill">🗺️</div><h3>Rozvozy ještě nejsou propojené</h3><p>${admin ? 'Zadej odkaz na CSV export objednávek ze Shoptetu (ve starém Apps Scriptu: Nastavení projektu → Vlastnosti skriptu → <code>SHOPTET_EXPORT_URL</code>). Klíče Mapy.com jsou nepovinné — bez nich mapa běží na OpenStreetMap a trasy na náhradní službě.' : 'Propojení musí nejdřív nastavit správce.'}</p>${admin ? '<button class="btn primary" id="rzCfg2">⚙ Nastavit propojení</button>' : ''}</div>`;
     if ($('#rzCfg')) $('#rzCfg').onclick = rzConfig; if ($('#rzCfg2')) $('#rzCfg2').onclick = rzConfig; return;
   }
   $('#main').innerHTML = `${head}<div class="stats" id="rzStats"></div>
   <div class="oj-bar"><div class="search oj-q"><span class="ic">⌕</span><input id="rzq" placeholder="Hledat objednávku, město, adresu, zboží…" value="${esc(RZ.q)}"></div><div class="chips" id="rzSt"></div><span class="grow"></span>
-    <div class="seg" id="rzMt"><button data-m="basic" class="${RZ.mapType === 'basic' ? 'on' : ''}">Základní</button><button data-m="aerial" class="${RZ.mapType === 'aerial' ? 'on' : ''}">Letecká</button></div></div>
+    ${c.tileKey ? '' : '<span class="muted small">mapa: OpenStreetMap</span>'}<div class="seg" id="rzMt" ${c.tileKey ? '' : 'hidden'}><button data-m="basic" class="${RZ.mapType === 'basic' ? 'on' : ''}">Základní</button><button data-m="aerial" class="${RZ.mapType === 'aerial' ? 'on' : ''}">Letecká</button></div></div>
   <div class="rz-grid"><div class="panel rz-mapw"><div id="rzMap"></div><div class="rz-sum" id="rzSum"></div>
       <div class="rz-route" id="rzRoute" hidden><div class="rz-m"><span>Zastávky</span><b id="rzRs"></b></div><div class="rz-m"><span>Trasa</span><b id="rzRd"></b></div><div class="rz-m"><span>Čas</span><b id="rzRt"></b></div><div class="rz-m"><span>Hodnota</span><b id="rzRv"></b></div>
         <button class="btn sm" id="rzOpen">Otevřít v Mapy.com</button><button class="btn sm" id="rzNav">Navigovat</button><button class="btn sm" id="rzClr" title="Zrušit trasu">✕</button></div></div>
@@ -926,7 +926,9 @@ async function rzInitMap() {
 }
 function rzTiles() {
   if (!RZ.map || !window.L) return; if (RZ.tile) RZ.map.removeLayer(RZ.tile);
-  RZ.tile = L.tileLayer(`https://api.mapy.cz/v1/maptiles/${RZ.mapType}/256/{z}/{x}/{y}?apikey=${encodeURIComponent(RZ.cfg.tileKey)}`, { minZoom: 0, maxZoom: 19, attribution: '<a href="https://mapy.com/" target="_blank" rel="noopener">Mapy.com</a> © Seznam.cz, a.s.' }).addTo(RZ.map);
+  RZ.tile = (RZ.cfg.tileKey
+    ? L.tileLayer(`https://api.mapy.cz/v1/maptiles/${RZ.mapType}/256/{z}/{x}/{y}?apikey=${encodeURIComponent(RZ.cfg.tileKey)}`, { minZoom: 0, maxZoom: 19, attribution: '<a href="https://mapy.com/" target="_blank" rel="noopener">Mapy.com</a> © Seznam.cz, a.s.' })
+    : L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' })).addTo(RZ.map);
   RZ.tile.bringToBack();
 }
 const rzPos = code => { const i = RZ.seq.indexOf(code); return i === -1 ? 0 : i + 1; };
@@ -981,7 +983,7 @@ async function rzDraw() {
   try {
     const r = await rzCall({ action: 'route', stops: sel.map(o => ({ lat: o.lat, lng: o.lng })) });
     if (!r.ok) { rzMsg(r.message || 'Trasu se nepodařilo vypočítat.'); return; }
-    RZ.route = { latlngs: r.latlngs, len: r.lengthMeters, dur: r.durationSeconds }; rzMsg('');
+    RZ.route = { latlngs: r.latlngs, len: r.lengthMeters, dur: r.durationSeconds }; rzMsg(r.note || '');
     RZ.rt.clearLayers(); L.polyline(r.latlngs, { color: '#fff', weight: 12, opacity: .96, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(RZ.rt); const line = L.polyline(r.latlngs, { color: '#1267E8', weight: 7, opacity: .98, lineCap: 'round', lineJoin: 'round' }).addTo(RZ.rt);
     sel.forEach((o, i) => { const m = rzMeta(o.status); L.marker([o.lat, o.lng], { zIndexOffset: 1000 + i, icon: L.divIcon({ className: '', html: `<div class="rz-mk rz-stop" style="--mc:${m.color};--mt:${m.text}">${i + 1}</div>`, iconSize: [48, 48], iconAnchor: [24, 45] }) }).bindTooltip(`${i + 1}. ${esc(o.code)} · ${esc(o.city || '')}`, { direction: 'top', offset: [0, -38] }).addTo(RZ.rt); });
     RZ.map.fitBounds(line.getBounds(), { padding: [55, 55] });
@@ -1011,18 +1013,18 @@ async function rzSync() {
   if (RZ.sync) return; RZ.sync = true; const set = t => { const b = $('#rzSync'); if (b) { b.disabled = true; b.innerHTML = `<span class="spin"></span> ${t}`; } };
   let msg = '', warn = false;
   try {
-    let r, guard = 0; do { set(guard ? 'Doplňuji souřadnice…' : 'Stahuji objednávky…'); r = await rzCall({ action: 'sync' }); if (r.ok === false) throw new Error(r.error); } while (r.geoRemaining > 0 && !r.noKey && ++guard < 12);
-    msg = `Načteno ${r.orders} objednávek`; if (r.missing) { warn = true; msg += ` · ${r.missing} bez souřadnic (adresu se nepodařilo najít)`; } if (r.noKey) { warn = true; msg += ' · chybí klíč Mapy.com'; }
+    let r, guard = 0; do { set(guard ? 'Doplňuji souřadnice…' : 'Stahuji objednávky…'); r = await rzCall({ action: 'sync' }); if (r.ok === false) throw new Error(r.error); } while (r.geoRemaining > 0 && ++guard < 12);
+    msg = `Načteno ${r.orders} objednávek`; if (r.missing) { warn = true; msg += ` · ${r.missing} bez souřadnic (adresu se nepodařilo najít)`; }
     await rzLoad();
   } catch (e) { warn = true; msg = e.message; }
   RZ.sync = false; drawRozvozy(); toast(msg, warn);
 }
 async function rzConfig() {
   const c = RZ.cfg || {};
-  const v = await modal({ title: 'Propojení rozvozů', body: `<p class="muted small">Hodnoty najdeš ve starém Apps Scriptu: Nastavení projektu → Vlastnosti skriptu. Prázdné pole se nezmění; uložené hodnoty se nezobrazují.</p>
+  const v = await modal({ title: 'Propojení rozvozů', body: `<p class="muted small">Povinný je jen odkaz na export ze Shoptetu. Klíče Mapy.com jsou <b>nepovinné</b>: bez nich mapa běží na OpenStreetMap, adresy se hledají přes OpenStreetMap a trasy přes náhradní službu (bez aktuální dopravy). Hodnoty najdeš ve starém Apps Scriptu: Nastavení projektu → Vlastnosti skriptu. Prázdné pole se nezmění; uložené hodnoty se nezobrazují.</p>
     <label>Odkaz na CSV export objednávek ze Shoptetu <span class="muted small">(<code>SHOPTET_EXPORT_URL</code>) ${c.hasCsv ? '· uloženo ✓' : ''}</span></label><input data-k="csv" placeholder="https://…" autocomplete="off">
-    <label>Klíč Mapy.com pro mapu <span class="muted small">(<code>MAPY_TILE_API_KEY</code>) ${c.tileKey ? '· uloženo ✓' : ''}</span></label><input data-k="tile" autocomplete="off">
-    <label>Klíč Mapy.com pro trasy a adresy <span class="muted small">(<code>MAPY_API_KEY_SERVER</code>) ${c.hasRoute ? '· uloženo ✓' : ''}</span></label><input data-k="route" autocomplete="off">`, focus: '[data-k="csv"]',
+    <label>Klíč Mapy.com pro mapu <span class="muted small">(nepovinné, <code>MAPY_TILE_API_KEY</code>) ${c.tileKey ? '· uloženo ✓' : ''}</span></label><input data-k="tile" autocomplete="off">
+    <label>Klíč Mapy.com pro trasy a adresy <span class="muted small">(nepovinné, <code>MAPY_API_KEY_SERVER</code> — když nevíš, nech prázdné: použije se klíč pro mapu) ${c.hasRoute ? '· uloženo ✓' : ''}</span></label><input data-k="route" autocomplete="off">`, focus: '[data-k="csv"]',
     actions: [{ label: 'Zrušit', value: null }, { label: 'Uložit', cls: 'primary', value: bd => ({ csvUrl: $('[data-k="csv"]', bd).value.trim(), tileKey: $('[data-k="tile"]', bd).value.trim(), routeKey: $('[data-k="route"]', bd).value.trim() }) }] });
   if (!v) return;
   try { await rzCall({ action: 'config_save', ...v }); await rzLoad(); drawRozvozy(); toast('Propojení uloženo ✓'); } catch (e) { toast(e.message, true); }

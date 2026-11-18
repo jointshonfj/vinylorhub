@@ -17,7 +17,7 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const WAREHOUSE = { lat: 49.6992203, lng: 14.0045589 };
 const ALLOWED = ['Nevyřízená', 'Zaplaceno', 'Vyřizuje se', 'SKLAD', 'Zabaleno - připraveno k expedici', 'Čeká na vyzvednutí přepravcem', 'Nedoplatek dopravy', 'Naše doprava'];
 const ALIASES: Record<string, string> = Object.fromEntries([...ALLOWED.map(s => [s.toLowerCase(), s]), ['zabaleno – připraveno k expedici', 'Zabaleno - připraveno k expedici']]);
-const GEO_PER_CALL = 50;
+const GEO_PER_CALL = 40;
 
 function claims(jwt: string): Record<string, unknown> {
   try { return JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } catch { return {}; }
@@ -46,7 +46,7 @@ const num = (v: unknown) => { const n = Number(String(v ?? '').replace(/\s/g, ''
 const join = (a: string[], sep: string) => a.map(clean).filter(Boolean).join(sep);
 const fmtAmt = (n: number) => Number.isInteger(n) ? String(n) : String(n).replace('.', ',');
 
-async function geocode(address: string, key: string): Promise<{ lat: number; lng: number } | null> {
+async function geocodeMapy(address: string, key: string): Promise<{ lat: number; lng: number } | null> {
   try {
     const r = await fetch(`https://api.mapy.com/v1/geocode?query=${encodeURIComponent(address)}&lang=cs&limit=1&apikey=${encodeURIComponent(key)}`, { headers: { 'X-Mapy-Api-Key': key, 'Accept': 'application/json' } });
     if (!r.ok) return null;
@@ -54,6 +54,30 @@ async function geocode(address: string, key: string): Promise<{ lat: number; lng
     const p = (j.items || j.results || [])[0]?.position;
     const lat = Number(p?.lat), lng = Number(p?.lon ?? p?.lng);
     return Number.isFinite(lat) && Number.isFinite(lng) && lat && lng ? { lat, lng } : null;
+  } catch { return null; }
+}
+// náhradní vyhledání adres bez klíče (OpenStreetMap Nominatim, max. 1 dotaz za sekundu)
+async function geocodeOsm(address: string): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(address)}`, { headers: { 'User-Agent': 'VinylorHub-Rozvoz/1.0', 'Accept': 'application/json' } });
+    await sleep(1100);
+    if (!r.ok) return null;
+    const j = await r.json(); const lat = Number(j?.[0]?.lat), lng = Number(j?.[0]?.lon);
+    return Number.isFinite(lat) && Number.isFinite(lng) && lat && lng ? { lat, lng } : null;
+  } catch { return null; }
+}
+async function geocode(address: string, key: string) {
+  if (key) { const g = await geocodeMapy(address, key); if (g) return g; }
+  return await geocodeOsm(address);
+}
+// náhradní trasa bez klíče (veřejný server OSRM, bez aktuální dopravy)
+async function routeOsm(pts: { lat: number; lng: number }[]) {
+  try {
+    const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${pts.map(p => `${p.lng},${p.lat}`).join(';')}?overview=full&geometries=geojson`, { headers: { 'User-Agent': 'VinylorHub-Rozvoz/1.0' } });
+    if (!r.ok) return null;
+    const j = await r.json(); const rt = j?.routes?.[0];
+    if (!rt?.geometry?.coordinates?.length) return null;
+    return { latlngs: rt.geometry.coordinates.map((c: number[]) => [c[1], c[0]]), lengthMeters: Number(rt.distance) || 0, durationSeconds: Number(rt.duration) || 0 };
   } catch { return null; }
 }
 
@@ -145,12 +169,12 @@ Deno.serve(async (req) => {
       }
       const need = [...new Set([...orders.values()].map(o => o.address))].filter(a => { const c = cache.get(a); return !c || (!(c.lat && c.lng) && !c.tried); });
       let geocoded = 0;
-      for (const a of need.slice(0, key ? GEO_PER_CALL : 0)) {
+      for (const a of need.slice(0, GEO_PER_CALL)) {
         const g = await geocode(a, key);
         cache.set(a, { lat: g?.lat ?? null, lng: g?.lng ?? null, tried: true }); if (g) geocoded++;
         await sleep(80);
       }
-      const geoRemaining = key ? Math.max(0, need.length - GEO_PER_CALL) : need.length;
+      const geoRemaining = Math.max(0, need.length - GEO_PER_CALL);
       const now = new Date().toISOString();
       const out = [...orders.values()].map(o => { const c = cache.get(o.address); return { code: o.code, status: o.status, address: o.address, city: o.city, zip: o.zip, lat: c?.lat ?? null, lng: c?.lng ?? null, total: o.total, paid: o.paid, items: [...new Set(o.items)].join(' | '), geo_tried: !!c?.tried || !!(c?.lat && c?.lng), synced_at: now }; });
       for (let i = 0; i < out.length; i += 200) {
@@ -160,25 +184,34 @@ Deno.serve(async (req) => {
       await sb.from('rozvoz_orders').delete().lt('synced_at', now);
       const missing = out.filter(o => !(o.lat && o.lng)).length;
       await sb.from('rozvoz_config').update({ synced_at: now, order_count: out.length }).eq('id', 1);
-      return json({ ok: true, orders: out.length, geocoded, missing, geoRemaining, noKey: !key });
+      return json({ ok: true, orders: out.length, geocoded, missing, geoRemaining });
     }
 
     if (b.action === 'route') {
       const stops = Array.isArray(b.stops) ? b.stops : [];
       if (!stops.length || stops.length > 16) return json({ ok: false, message: 'Vyber 1 až 16 objednávek.' });
-      const key = cfg?.route_key || cfg?.tile_key; if (!key) return json({ ok: false, message: 'Není nastavený klíč Mapy.com (⚙ Propojení).' });
+      const key = cfg?.route_key || cfg?.tile_key || '';
       const pts = [{ lat: WAREHOUSE.lat, lng: WAREHOUSE.lng }];
       for (const s of stops) { const lat = Number(s.lat), lng = Number(s.lng); if (!Number.isFinite(lat) || !Number.isFinite(lng)) return json({ ok: false, message: 'Jedna z objednávek nemá platné souřadnice.' }); pts.push({ lat, lng }); }
-      const c = (p: { lat: number; lng: number }) => `${p.lng},${p.lat}`;
-      let url = `https://api.mapy.com/v1/routing/route?apikey=${encodeURIComponent(key)}&start=${encodeURIComponent(c(pts[0]))}&end=${encodeURIComponent(c(pts[pts.length - 1]))}&routeType=car_fast_traffic&format=geojson`;
-      const way = pts.slice(1, -1).map(c); if (way.length) url += '&waypoints=' + encodeURIComponent(way.join(';'));
-      let res: Response;
-      try { res = await fetch(url, { headers: { 'X-Mapy-Api-Key': key } }); } catch { return json({ ok: false, message: 'Nepodařilo se spojit s Mapy.com.' }); }
-      if (!res.ok) return json({ ok: false, message: 'Mapy.com vrátily chybu HTTP ' + res.status + '.' });
-      let payload: any; try { payload = await res.json(); } catch { return json({ ok: false, message: 'Odpověď Mapy.com není platný JSON.' }); }
-      const latlngs = coords(payload).filter(p => p && p.length >= 2 && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))).map(p => [Number(p[1]), Number(p[0])]);
-      if (!latlngs.length) return json({ ok: false, message: 'V odpovědi Mapy.com nebyla nalezena geometrie trasy.' });
-      return json({ ok: true, latlngs, lengthMeters: pick(payload, ['length', 'distance', 'lengthMeters']), durationSeconds: pick(payload, ['duration', 'time', 'durationSeconds']) });
+      let why = 'Není nastavený klíč Mapy.com.';
+      if (key) {
+        const c = (p: { lat: number; lng: number }) => `${p.lng},${p.lat}`;
+        let url = `https://api.mapy.com/v1/routing/route?apikey=${encodeURIComponent(key)}&start=${encodeURIComponent(c(pts[0]))}&end=${encodeURIComponent(c(pts[pts.length - 1]))}&routeType=car_fast_traffic&format=geojson`;
+        const way = pts.slice(1, -1).map(c); if (way.length) url += '&waypoints=' + encodeURIComponent(way.join(';'));
+        try {
+          const res = await fetch(url, { headers: { 'X-Mapy-Api-Key': key } });
+          if (!res.ok) why = 'Mapy.com vrátily chybu HTTP ' + res.status + '.';
+          else {
+            const payload: any = await res.json();
+            const latlngs = coords(payload).filter(p => p && p.length >= 2 && Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1]))).map(p => [Number(p[1]), Number(p[0])]);
+            if (latlngs.length) return json({ ok: true, latlngs, lengthMeters: pick(payload, ['length', 'distance', 'lengthMeters']), durationSeconds: pick(payload, ['duration', 'time', 'durationSeconds']) });
+            why = 'V odpovědi Mapy.com nebyla nalezena geometrie trasy.';
+          }
+        } catch { why = 'Nepodařilo se spojit s Mapy.com.'; }
+      }
+      const alt = await routeOsm(pts);
+      if (alt) return json({ ok: true, ...alt, note: `${why} Trasa je vypočtená náhradní službou (bez aktuální dopravy, čas je orientační).` });
+      return json({ ok: false, message: why + ' Náhradní služba také neodpověděla.' });
     }
     return json({ error: 'Neznámá akce.' }, 400);
   } catch (e) {
