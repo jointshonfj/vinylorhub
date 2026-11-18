@@ -325,20 +325,50 @@ function labelTables() {
   });
 }
 { let q = 0; new MutationObserver(() => { if (q) return; q = requestAnimationFrame(() => { q = 0; labelTables(); }); }).observe(document.getElementById('app'), { childList: true, subtree: true }); }
+const NAV_SVG = {
+  offers: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
+  orders: '<path d="M2 6h11v10H2zM13 9h5l3 3v4h-8"/><circle cx="6.5" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
+  stock: '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/>',
+  visits: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.4"/><path d="M17 14.2c2.4.3 4 2.2 4 4.8"/>',
+  boards: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16M15 4v10"/>',
+  ct: '<path d="M3 14h18l-2 5H5zM6 14V9h12v5M9 9V6h6v3"/>',
+  moves: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9"/>',
+  account: '<circle cx="12" cy="8.5" r="3.6"/><path d="M4.5 20.5c0-4 3.4-6.5 7.5-6.5s7.5 2.5 7.5 6.5"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
+  cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+};
+const svgIco = k => `<svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_SVG[k] || ''}</svg>`;
+const HB_TITLES = { offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
 function shell(active, inner) {
-  const nav = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ico">${icon}</span><span>${label}</span></a>`;
+  const nav = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ico">${svgIco(key)}</span><span>${label}</span></a>`;
   if (!$('.shell')) {
     $('#app').innerHTML = `
     <div class="mobile-top"><button id="menuBtn" aria-label="Menu">☰</button><b>Vinylor Hub</b></div>
     <div class="shell">
       <aside class="side" id="side"></aside>
-      <main class="main" id="main"></main>
+      <div class="mainwrap">
+        <header class="hubbar"><b id="hbTitle"></b>
+          <label class="hb-search">${svgIco('search')}<input id="hbq" type="search" placeholder="Hledat objednávku, produkt, referenci…" autocomplete="off"><kbd>⌘ K</kbd></label>
+          <span class="hb-date">${svgIco('cal')}<span id="hbDate"></span></span>
+          <a class="hb-me" href="#/ucet" title="Můj účet"><span class="av">${initials(S.me.id)}</span><span class="hb-nm">${esc(S.me.name)}</span></a>
+        </header>
+        <main class="main" id="main"></main>
+      </div>
     </div>
     <div class="scrim" id="scrim"></div>
     <nav class="tabbar" id="tabbar" aria-label="Hlavní navigace"></nav>`;
+    $('#hbDate').textContent = new Date().toLocaleDateString('cs-CZ', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+    $('#hbq').onkeydown = e => {
+      if (e.key !== 'Enter') return; const v = e.target.value.trim(); if (!v) return;
+      OJ.q = v; OJ.tab = 'potreba'; OJ.card = ''; ls.set('vh_oj_tab', 'potreba'); e.target.value = ''; e.target.blur();
+      if (location.hash === '#/objednavky') route(); else location.hash = '#/objednavky';
+    };
+    addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && $('#hbq')) { e.preventDefault(); $('#hbq').focus(); $('#hbq').select(); } });
     $('#menuBtn').onclick = () => setSide(!$('#side').classList.contains('open'));
     $('#scrim').onclick = () => setSide(false);
   }
+  $('#hbTitle').textContent = HB_TITLES[active] || 'Vinylor Hub';
   const tab = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ti">${icon}</span><span>${label}</span></a>`;
   $('#tabbar').innerHTML = `${tab('#/', 'offers', '📄', 'Nabídky')}${tab('#/objednavky', 'orders', '🚚', 'Objednávky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}${tab('#/nastenka', 'boards', '🗂️', 'Nástěnka')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account', 'ct', 'moves'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
   $('#tbMenu').onclick = () => setSide(true);
@@ -2333,7 +2363,7 @@ async function renderOj() {
   try { await Promise.all([loadSettings(), loadOj(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
   const last = cfg().ojLastSync;
   $('#main').innerHTML = `
-  <div class="topbar"><h1>Objednávky</h1><span class="grow"></span><span class="muted small" id="ojLast">${last ? 'Shoptet: ' + ago(last) : 'zatím nenačteno'}</span>
+  <div class="pg-head"><span class="pg-ico">${svgIco('orders')}</span><div class="grow"><h1>Objednávky</h1><p>Nákup u dodavatelů, sledování stavu, naskladnění a platby.</p></div><span class="muted small" id="ojLast">${last ? 'Shoptet: ' + ago(last) : 'zatím nenačteno'}</span>
     <button class="btn" id="ojSync">↻ Načíst ze Shoptetu</button></div>
   <div class="chips oj-tabs" id="ojTabs" style="margin-bottom:14px"></div><div id="ojHead"></div><div id="ojBody"></div>`;
   bindStockTabs();
@@ -2401,6 +2431,23 @@ async function ojCopyRows(rows, title) {
 }
 // ---------- záložka Přehled: co teď udělat + co je na cestě ----------
 function ojGo(tab, f = {}) { OJ.tab = tab; ls.set('vh_oj_tab', tab); Object.assign(OJ, { q: '', card: '', ...f }); drawOj(); window.scrollTo(0, 0); }
+async function ojOverviewExtra(el) {
+  const alive = () => $('#ojBody') === el && $('#ovRc');
+  const put = (id, html) => { if (alive() && $(id)) $(id).innerHTML = html; };
+  try {
+    const r = check(await sb.from('stock_receipts').select('id,doc_no,supplier,date,item_count,stocked_count,imported,created_at').eq('deleted', false).order('created_at', { ascending: false }).limit(3));
+    put('#ovRc', r.length ? r.map(x => `<a class="rc-row" href="#/sklad"><span class="rc-i">${svgIco('stock')}</span><div class="grow"><b>${esc(x.doc_no || 'Příjemka')}</b> <span class="stp ${x.imported ? 'ok' : 'wait'}">${x.imported ? 'Naskladněno' : 'Čeká'}</span><div class="small muted">${esc(x.supplier || '')} · ${x.item_count || 0} ks položek</div></div><span class="small muted nowrap">${x.date ? czDate(x.date) : ''}</span></a>`).join('') : '<div class="muted small" style="padding:6px 2px">Zatím žádné příjemky.</div>');
+  } catch { put('#ovRc', '<div class="muted small">Nepodařilo se načíst.</div>'); }
+  try {
+    if (!hasApp('kontejnery')) throw 0;
+    const r = check(await sb.from('ct_containers').select('*').neq('status', 'delivered').order('eta', { ascending: true, nullsFirst: false }).limit(3));
+    put('#ovCt', r.length ? r.map(c => `<a class="rc-row" href="#/k/${c.id}"><span class="rc-i">${svgIco('ct')}</span><div class="grow"><b>${esc(c.number || 'bez čísla')}</b> ${CT_ST[c.status] ? ctBadge(c.status) : ''}<div class="small muted">${esc(c.vessel || '')}</div></div><span class="small nowrap">ETA <b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b></span></a>`).join('') : '<div class="muted small" style="padding:6px 2px">Žádný kontejner na cestě.</div>');
+  } catch { put('#ovCt', '<div class="muted small" style="padding:6px 2px">Kontejnery nejsou k dispozici.</div>'); }
+  try {
+    const r = check(await sb.from('stock_history').select('at,source_label,reference,code,amount').order('at', { ascending: false }).limit(4));
+    put('#ovMv', r.length ? `<table class="dt"><thead><tr><th>Datum</th><th>Produkt / doklad</th><th>Pohyb</th><th class="r">Množství</th></tr></thead><tbody>${r.map(m => `<tr><td class="nowrap">${czDate(String(m.at).slice(0, 10))}</td><td><b>${esc(m.code || '')}</b><div class="small muted">${esc(m.reference || '')}</div></td><td><span class="stp ${Number(m.amount) >= 0 ? 'ok' : 'bad'}">${Number(m.amount) >= 0 ? 'Příjem' : 'Výdej'}</span></td><td class="r nowrap"><b>${Number(m.amount) > 0 ? '+' : ''}${fmtQ(m.amount)}</b></td></tr>`).join('')}</tbody></table>` : '<div class="muted small" style="padding:14px">Zatím žádné pohyby.</div>');
+  } catch { put('#ovMv', '<div class="muted small" style="padding:14px">Nepodařilo se načíst.</div>'); }
+}
 function drawOjOverview(infos) {
   const el = $('#ojBody'); const act = infos.filter(i => ojBucket(i) === 'active');
   const toOrder = act.filter(i => i.stage === 'order');
@@ -2425,9 +2472,51 @@ function drawOjOverview(infos) {
   OJ._todo = todo;
   const eta = a => { if (!a.expected_at) return '<span class="muted">bez termínu</span>'; const d = Math.round((new Date(a.expected_at + 'T12:00') - new Date(ymd(new Date()) + 'T12:00')) / 864e5); return `<span class="tag ${d < 0 ? 'late' : d <= 2 ? '' : 'blue'}">📅 ${czDate(a.expected_at)}</span> <span class="muted small">${d < 0 ? `${-d} d po termínu` : d === 0 ? 'dnes' : d === 1 ? 'zítra' : 'za ' + d + ' d'}</span>`; };
   const nOrders = act.length;
+  const sumTxt = unpaidSum;
+  const kpi = [
+    ['cart', 'var(--s-sent)', OJ_STAGE.order[0].replace('Potřeba objednat', 'K objednání'), toOrder.length, '', () => ojGo('potreba', { card: 'order', view: 'list' })],
+    ['truck', 'var(--s-sent)', OJ_STAGE.ordered[0], act.filter(i => i.stage === 'ordered').length, '', () => ojGo('potreba', { view: 'board' })],
+    ['ship', 'var(--brand)', OJ_STAGE.transit[0], onWay.length, '', () => ojGo('aufy', { af: 'confirmed' })],
+    ['box', 'var(--s-confirmed)', 'Doručeno <small>(čeká na naskladnění)</small>', toStock.length, '', () => toStock[0] ? (location.hash = '#/svoz/' + toStock[0].id) : ojGo('svozy')],
+    ['card', 'var(--s-rejected)', 'K zaplacení', unpaid.length, `<span class="kpi-pill bad">${sumTxt}</span>`, () => ojGo('aufy', { af: 'unpaid' })],
+  ];
+  OJ._kpi = kpi;
+  const KI = { cart: '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2.5 3.5h3l2.2 11h10.6l2-8H6.3"/>', truck: NAV_SVG.orders, ship: NAV_SVG.ct, box: NAV_SVG.stock, card: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19M6 15h4"/>' };
+  const mini = (st, n) => {
+    const L = act.filter(i => i.stage === st); if (st === 'delivered') L.push(...infos.filter(i => i.stage === 'delivered' && !i.o.archived));
+    const show = L.slice(0, n);
+    return `<div class="mb-col" data-st="${st}"><div class="mb-h" data-go="${st}">${esc(OJ_STAGE[st][0])} <span class="mb-n">${L.length}</span></div>
+      ${show.map(i => { const a = i.aufs[0]; const sup = (i.sups[0] || (a && ojSup(a.supplier_id)) || {}).name || '';
+        return `<div class="mb-card" data-o="${esc(i.o.code)}"><div class="mb-top">${sup ? `<span class="mb-sup">${esc(sup)}</span>` : '<span></span>'}${a && a.auf_number ? `<small>${esc(a.auf_number)}</small>` : ''}</div>
+        <b>${esc(i.o.customer || i.o.ref || i.o.code)}</b><div class="small muted">${esc(i.o.code)} · ${i.items.length} ${i.items.length === 1 ? 'položka' : i.items.length < 5 ? 'položky' : 'položek'}${a && a.amount_eur != null ? ' · ' + fmtAmt(a) : ''}</div>
+        ${a && a.paid_at ? `<span class="mb-ok">✓ Zaplaceno ${czDate(a.paid_at)}</span>` : a && a.expected_at ? `<span class="mb-eta">📅 ETA ${czDate(a.expected_at)}</span>` : ''}</div>`; }).join('') || '<div class="mb-empty">—</div>'}
+      ${L.length > n ? `<button class="mb-more" data-go="${st}">+ ${L.length - n} dalších</button>` : ''}</div>`;
+  };
+  const stageOf = a => a.delivered_at ? 'Doručeno' : a.status === 'confirmed' ? OJ_STAGE.transit[0] : OJ_STAGE.ordered[0];
+  const stClass = a => a.delivered_at ? 'ok' : a.status === 'confirmed' ? 'go' : 'wait';
+  const lastAufs = OJ.aufs.filter(a => a.status !== 'draft').sort((x, y) => String(y.created_at || '').localeCompare(String(x.created_at || ''))).slice(0, 5);
+  const dueList = unpaid.slice().sort((x, y) => String(x.due_at || '9999').localeCompare(String(y.due_at || '9999'))).slice(0, 4);
   el.innerHTML = `
-  <div class="stats oj-cards">${[['🛒', OJ_STAGE.order[0], toOrder.length, 'var(--s-postponed)'], ['✉', OJ_STAGE.ordered[0], waiting.length, 'var(--s-sent)'], ['🚚', OJ_STAGE.transit[0], onWay.length, 'var(--brand)'], ['📥', 'K naskladnění', toStock.length, 'var(--s-confirmed)'], ['⚠', OJ_STAGE.issue[0], issues.length, 'var(--s-rejected)'], ['📦', 'Aktivní objednávky', nOrders, 'var(--muted)']].map(([ic, l, n, c]) => `<div class="panel stat" style="--c:${c}"><div class="k">${ic}</div><div class="v">${n}</div><div class="s">${l}</div></div>`).join('')}</div>
-  <h3 class="oj-h">Co teď udělat</h3>
+  <div class="kpis">${kpi.map(([ic, c, l, n, extra], i) => `<button class="panel kpi" data-k="${i}" style="--c:${c}"><span class="kpi-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${KI[ic]}</svg></span><span class="kpi-t"><span class="kpi-l">${l}</span><b class="kpi-v">${n}</b>${extra}</span></button>`).join('')}</div>
+  <div class="ovg">
+    <div class="ov-main">
+      <section class="panel dash"><div class="dash-h">${svgIco('boards')}<b>Nástěnka objednávek</b><span class="grow"></span><button class="btn sm" id="ovBoard">Otevřít nástěnku ›</button></div>
+        <div class="mini-board">${['order', 'ordered', 'transit', 'delivered'].map(st => mini(st, 2)).join('')}</div></section>
+      <div class="ov-two">
+        <section class="panel dash"><div class="dash-h">${svgIco('stock')}<b>Naskladnění (příjemky)</b><span class="grow"></span><a class="btn sm primary" href="#/sklad">＋ Nová příjemka</a></div><div id="ovRc" class="dash-b"><div class="sk" style="height:90px"></div></div><a class="dash-f" href="#/sklad">Zobrazit příjemky →</a></section>
+        <section class="panel dash"><div class="dash-h">${svgIco('ct')}<b>Kontejnery</b><span class="grow"></span>${hasApp('kontejnery') ? '<a class="btn sm primary" href="#/kontejnery">Otevřít</a>' : ''}</div><div id="ovCt" class="dash-b"><div class="sk" style="height:90px"></div></div><a class="dash-f" href="#/kontejnery">Zobrazit všechny kontejnery →</a></section>
+      </div>
+    </div>
+    <div class="ov-side">
+      <section class="panel dash"><div class="dash-h">${svgIco('orders')}<b>Objednávky u dodavatelů</b><span class="grow"></span><button class="btn sm primary" id="ovNew2">Nová objednávka ＋</button></div>
+        <div class="dash-b nopad">${lastAufs.length ? `<table class="dt"><thead><tr><th>Číslo / ref.</th><th>Dodavatel</th><th class="r">Částka</th><th>Stav</th></tr></thead><tbody>${lastAufs.map(a => `<tr class="click" data-o="${esc(a.order_code)}"><td><b>${esc(a.auf_number || a.order_code)}</b></td><td><span class="mb-sup">${esc((ojSup(a.supplier_id) || {}).name || '')}</span></td><td class="r nowrap">${fmtAmt(a)}</td><td><span class="stp ${stClass(a)}">${esc(stageOf(a))}</span></td></tr>`).join('')}</tbody></table>` : '<div class="muted small" style="padding:14px">Zatím žádné objednávky u dodavatelů.</div>'}</div>
+        <a class="dash-f" href="#" id="ovAllA">Zobrazit všechny objednávky →</a></section>
+      <section class="panel dash"><div class="dash-h">${svgIco('cal')}<b>K zaplacení dodavatelům</b><span class="grow"></span><a class="dash-lnk" href="#" id="ovAllP">Všechny platby →</a></div>
+        <div class="dash-b nopad">${dueList.length ? `<table class="dt"><thead><tr><th>Dodavatel</th><th>Č. objednávky</th><th>Splatnost</th><th class="r">Částka</th></tr></thead><tbody>${dueList.map(a => { const d = a.due_at ? Math.round((new Date(a.due_at + 'T12:00') - new Date(ymd(new Date()) + 'T12:00')) / 864e5) : null; return `<tr class="click" data-o="${esc(a.order_code)}"><td><span class="mb-sup">${esc((ojSup(a.supplier_id) || {}).name || '')}</span></td><td>${esc(a.auf_number || a.order_code)}</td><td class="nowrap">${a.due_at ? czDate(a.due_at) : '—'}${d !== null && d < 0 ? ` <span class="late-pill">−${-d} d</span>` : ''}</td><td class="r nowrap">${fmtAmt(a)}</td></tr>`; }).join('')}</tbody></table>` : '<div class="muted small" style="padding:14px">Nic k zaplacení.</div>'}</div></section>
+      <section class="panel dash"><div class="dash-h">${svgIco('moves')}<b>Historie pohybů zásob</b><span class="grow"></span><a class="dash-lnk" href="#/pohyby">Zobrazit historii →</a></div><div id="ovMv" class="dash-b nopad"><div class="sk" style="height:90px;margin:10px"></div></div></section>
+    </div>
+  </div>
+    <h3 class="oj-h">Co teď udělat</h3>
   ${todo.length ? `<div class="oj-todo">${todo.map((t, i) => `<button class="panel oj-t" data-t="${i}" style="--c:${t[5]}"><span class="oj-ti">${t[1]}</span><div class="grow"><b>${t[2]}</b><div class="muted small">${t[3]}</div></div><span class="btn sm">${t[6]} ›</span></button>`).join('')}</div>`
     : '<div class="panel empty-big"><div class="ill">✅</div><h3>Všechno vyřízeno</h3><p>Nic nečeká na objednání ani na kontrolu. Novou objednávku zboží na sklad založíš tlačítkem níže.</p></div>'}
   <div style="margin:10px 0 4px;display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" id="ovNew">＋ Objednávka na sklad</button><button class="btn" id="ovAll">Objednávky ze Shoptetu ›</button></div>
@@ -2440,6 +2529,13 @@ function drawOjOverview(infos) {
     : '<div class="panel panel-b muted">Zatím nic na cestě. Objednávku dodavateli odešli v záložce Objednávky a po potvrzení se tu objeví.</div>'}
   ${issues.length ? `<h3 class="oj-h">Reklamace</h3><div class="panel" style="overflow-x:auto"><table class="list"><thead><tr><th>Dodavatel</th><th>Objednávka</th><th>Č. obj. u dodavatele</th><th>Problém</th><th></th></tr></thead><tbody>
     ${issues.map(a => `<tr class="click" data-o="${esc(a.order_code)}"><td><b>${ojSupLabel(ojSup(a.supplier_id))}</b></td><td><u>${esc(a.order_code)}</u></td><td>${esc(a.auf_number)}</td><td>${esc(a.delivery_note) || '<span class="muted">bez poznámky</span>'}</td><td><button class="btn sm" data-resolve="${a.id}">✓ Vyřešeno</button></td></tr>`).join('')}</tbody></table></div>` : ''}`;
+  $$('.kpi', el).forEach(b => b.onclick = () => OJ._kpi[b.dataset.k][5]());
+  $('#ovBoard').onclick = () => ojGo('potreba', { view: 'board' }); $('#ovNew2').onclick = ojManualOrder;
+  $('#ovAllA').onclick = e => { e.preventDefault(); ojGo('aufy'); }; $('#ovAllP').onclick = e => { e.preventDefault(); ojGo('aufy', { af: 'unpaid' }); };
+  $$('.mb-h, .mb-more', el).forEach(b => b.onclick = () => ojGo('potreba', { view: 'board' }));
+  $$('.mb-card', el).forEach(c => c.onclick = () => { location.hash = orderHref(c.dataset.o); });
+  $$('.dt tr.click', el).forEach(r => r.onclick = () => { location.hash = orderHref(r.dataset.o); });
+  ojOverviewExtra(el);
   $$('.oj-t', el).forEach(b => b.onclick = () => OJ._todo[b.dataset.t][4]());
   $('#ovNew').onclick = ojManualOrder; $('#ovAll').onclick = () => ojGo('potreba'); $$('.oj-sup', el).forEach(b => b.onclick = () => ojGo('sup:' + b.dataset.s));
   $$('tr.click', el).forEach(r => r.onclick = e => { if (e.target.closest('[data-recv],[data-resolve],a')) return; location.hash = orderHref(r.dataset.o); });
