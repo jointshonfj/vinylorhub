@@ -6,6 +6,8 @@
 //   { action: 'order_options' }                            → způsoby platby a dopravy, stavy objednávek (pro dialog překlopení)
 //   { action: 'oj_sync' }                                  → OrderJoi: načte objednávky ve stavu „Potřeba objednat“
 //   { action: 'svoz_stock_in', shipmentId, stockId }       → OrderJoi: svoz dorazil → naskladnění všech řádků
+//   { action: 'inv_supplies', stockId, codes? }           → Inventura: aktuální zásoby ze Shoptetu (jen čtení)
+//   { action: 'inv_apply', sessionId, stockId, items: [{ id, code, counted, system }] } → Inventura: nastaví fyzický stav (realStock) po schválení
 //   { action: 'order_create', offerId, paymentGuid, shippingGuid, shippingPriceVat, statusId, sendEmail, allowNegative? }  → nabídka → objednávka (allowNegative: založit i při nedostatku na skladě, sklad se stáhne do mínusu)
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
@@ -348,6 +350,77 @@ Deno.serve(async (req) => {
       await sb.from('oj_shipments').update({ lines: upd, stock_id: stockId, updated_at: new Date().toISOString(), ...(all ? { status: 'stocked', stocked_at: new Date().toISOString() } : {}) }).eq('id', shipmentId);
       await audit('shoptet_svoz_stock_in', { shipment: shipmentId, stock: stockId, ok: okIds.size, failed: results.filter(x => x.status === 'error').length });
       return json({ ok: true, results, all });
+    }
+    // --- Inventura: přečtení aktuálních zásob (jen čtení) ---
+    if (b.action === 'inv_supplies') {
+      const stockId = Number(b.stockId);
+      if (!Number.isInteger(stockId)) return json({ error: 'Neplatný sklad.' }, 400);
+      const want = Array.isArray(b.codes) && b.codes.length ? new Set(b.codes.map((c: unknown) => String(c).trim())) : null;
+      const AMT = ['realStock', 'amount', 'quantity', 'amountInStock', 'inStock'];
+      const map: Record<string, number> = {}; let sample: any = null; let unknownShape = false; let total = 0;
+      for (let page = 1; page <= 30; page++) {
+        const r = await call('GET', `/stocks/${stockId}/supplies?itemsPerPage=1000&page=${page}`);
+        if (r.status !== 200) return json({ error: 'Shoptet nevrátil zásoby: ' + errText(r) }, 502);
+        const rows: any[] = r.json?.data?.supplies || [];
+        if (!sample && rows.length) sample = rows[0];
+        for (const it of rows) {
+          const code = String(it.code ?? it.productCode ?? '').trim(); if (!code) continue;
+          total++;
+          if (want && !want.has(code)) continue;
+          const f = AMT.find(k => it[k] != null && Number.isFinite(Number(it[k])));
+          if (!f) { unknownShape = true; continue; }
+          map[code] = Number(it[f]);
+        }
+        const pages = Number(r.json?.data?.paginator?.pageCount ?? 0);
+        if (rows.length < 1000 || (pages && page >= pages)) break;
+        await sleep(250);
+      }
+      return json({ ok: true, supplies: map, total, unknownShape, sampleKeys: sample ? Object.keys(sample) : [] });
+    }
+
+    // --- Inventura: nastavení fyzického stavu (realStock = napočteno) po schválení ---
+    if (b.action === 'inv_apply') {
+      const stockId = Number(b.stockId); const sessionId = String(b.sessionId || '');
+      const items = Array.isArray(b.items) ? b.items : [];
+      if (!Number.isInteger(stockId) || !/^[0-9a-f-]{36}$/.test(sessionId)) return json({ error: 'Neplatná inventura nebo sklad.' }, 400);
+      if (!items.length || items.length > 100) return json({ error: 'Pošli 1 až 100 položek.' }, 400);
+      const { data: ses } = await sb.from('inv_sessions').select('id,status').eq('id', sessionId).maybeSingle();
+      if (!ses) return json({ error: 'Inventura nenalezena.' }, 404);
+      if (ses.status !== 'review') return json({ error: 'Inventura musí být ve stavu „ke schválení“.' }, 400);
+      const stocks = await call('GET', '/stocks');
+      if (!(stocks.json?.data?.stocks || []).some((s: any) => s.id === stockId)) return json({ error: 'Takový sklad ve Shoptetu neexistuje.' }, 400);
+      const results: { id: string; code: string; status: string; message?: string }[] = [];
+      for (const it of items) {
+        const id = String(it.id || '').slice(0, 40), code = String(it.code || '').trim().slice(0, 64), counted = Number(it.counted);
+        const system = it.system == null || it.system === '' ? null : Number(it.system);
+        if (!id || !code || !Number.isFinite(counted) || counted < 0 || counted > 1_000_000) { results.push({ id, code, status: 'error', message: 'Neplatný kód nebo množství.' }); continue; }
+        const { data: row } = await sb.from('inv_items').select('id,counted_qty,applied_at').eq('id', id).eq('session_id', sessionId).maybeSingle();
+        if (!row || Number(row.counted_qty) !== counted) { results.push({ id, code, status: 'error', message: 'Položka v inventuře neodpovídá odeslané hodnotě — načti stránku znovu.' }); continue; }
+        const { error: le } = await sb.from('inv_apply_log').insert({ session_id: sessionId, item_id: id, code, counted, system_qty: Number.isFinite(system as number) ? system : null, stock_id: stockId, actor: u.user.id });
+        if (le) { results.push({ id, code, status: (le as { code?: string }).code === '23505' ? 'duplicate' : 'error', message: (le as { code?: string }).code === '23505' ? 'Tato položka už byla do Shoptetu odeslána.' : le.message }); continue; }
+        let r;
+        try { r = await call('PATCH', `/stocks/${stockId}/movements`, { data: [{ productCode: code, realStock: counted }] }); }
+        catch (e) { r = { status: 0, json: null, text: (e as Error).message }; }
+        const failed = r.status !== 200 || (r.json?.errors && r.json.errors.length);
+        if (failed) {
+          if (r.status !== 0) await sb.from('inv_apply_log').delete().eq('session_id', sessionId).eq('item_id', id);
+          results.push({ id, code, status: 'error', message: r.status === 0 ? 'Spojení se Shoptetem se přerušilo — ověř stav ve Shoptetu a napiš správci, než to zkusíš znovu.' : errText(r) });
+        } else {
+          await sb.from('inv_apply_log').update({ request_id: r.json?.metadata?.requestId ?? null }).eq('session_id', sessionId).eq('item_id', id);
+          await sb.from('inv_items').update({ applied_at: new Date().toISOString() }).eq('id', id);
+          results.push({ id, code, status: 'ok' });
+        }
+        await sleep(300);
+      }
+      // položky bez rozdílu se neposílají → jen se označí jako vyřízené (níže)
+      const { data: left } = await sb.from('inv_items').select('id,system_qty,counted_qty').eq('session_id', sessionId).is('applied_at', null).not('counted_qty', 'is', null);
+      const pending = (left || []).filter((x: any) => !(x.system_qty != null && Number(x.system_qty) === Number(x.counted_qty)));
+      const noChange = (left || []).filter((x: any) => x.system_qty != null && Number(x.system_qty) === Number(x.counted_qty)).map((x: any) => x.id);
+      if (noChange.length) await sb.from('inv_items').update({ applied_at: new Date().toISOString() }).in('id', noChange);
+      const done = pending.length === 0;
+      if (done) await sb.from('inv_sessions').update({ status: 'done', done_at: new Date().toISOString(), updated_at: new Date().toISOString(), stock_id: stockId }).eq('id', sessionId);
+      await audit('shoptet_inventory_apply', { session: sessionId, stock: stockId, ok: results.filter(x => x.status === 'ok').length, failed: results.filter(x => x.status === 'error').length, duplicate: results.filter(x => x.status === 'duplicate').length });
+      return json({ ok: true, results, done });
     }
     return json({ error: 'Neznámá akce' }, 400);
   } catch (e) {

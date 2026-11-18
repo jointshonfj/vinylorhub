@@ -269,7 +269,7 @@ async function route() {
   const from = prevHash; prevHash = h;
   document.body.classList.add('nav-busy');
   try { await routeInner(); } finally { document.body.classList.remove('nav-busy'); }
-  if (from && /^#\/(o|s|oj|svoz|k|b)\//.test(from) && !/^#\/(o|s|oj|svoz|k|b)\//.test(h) && scrollMem[h] != null) window.scrollTo(0, scrollMem[h]);
+  if (from && /^#\/(o|s|oj|svoz|k|b|inventura)\//.test(from) && !/^#\/(o|s|oj|svoz|k|b|inventura)\//.test(h) && scrollMem[h] != null) window.scrollTo(0, scrollMem[h]);
 }
 async function routeInner() {
   const h = location.hash || '#/';
@@ -299,6 +299,8 @@ async function routeInner() {
   if ((m = h.match(/^#\/s\/([\w-]+)/))) return renderReceipt(m[1]);
   if (h === '#/sklad') return renderStock();
   if (h === '#/pohyby') return renderMoves();
+  if (h === '#/inventura') return renderInvList();
+  if ((m = h.match(/^#\/inventura\/([\w-]+)/))) return renderInvDetail(m[1]);
   if (h === '#/svozy' || h === '#/objednavky') return renderOj();
   if (h === '#/kontejnery') return renderCt();
   if ((m = h.match(/^#\/k\/([\w-]+)/))) return renderContainer(m[1]);
@@ -330,6 +332,7 @@ const NAV_SVG = {
   home: '<path d="M3.5 11 12 4l8.5 7M6 9.5V20h12V9.5M10 20v-6h4v6"/>',
   offers: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
   orders: '<path d="M2 6h11v10H2zM13 9h5l3 3v4h-8"/><circle cx="6.5" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
+  inv: '<rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4h6v3H9zM9 14l2 2 4-4"/>',
   stock: '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/>',
   visits: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.4"/><path d="M17 14.2c2.4.3 4 2.2 4 4.8"/>',
   boards: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16M15 4v10"/>',
@@ -341,7 +344,7 @@ const NAV_SVG = {
   cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
 };
 const svgIco = k => `<svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_SVG[k] || ''}</svg>`;
-const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
+const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', inv: 'Inventura', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
 function shell(active, inner) {
   const nav = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ico">${svgIco(key)}</span><span>${label}</span></a>`;
   if (!$('.shell')) {
@@ -372,7 +375,7 @@ function shell(active, inner) {
   }
   $('#hbTitle').textContent = HB_TITLES[active] || 'Vinylor Hub';
   const tab = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ti">${icon}</span><span>${label}</span></a>`;
-  $('#tabbar').innerHTML = `${tab('#/', 'home', '🏠', 'Přehled')}${tab('#/nabidky', 'offers', '📄', 'Nabídky')}${tab('#/objednavky', 'orders', '🚚', 'Objednávky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account', 'ct', 'moves', 'boards'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
+  $('#tabbar').innerHTML = `${tab('#/', 'home', '🏠', 'Přehled')}${tab('#/nabidky', 'offers', '📄', 'Nabídky')}${tab('#/objednavky', 'orders', '🚚', 'Objednávky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account', 'ct', 'moves', 'boards', 'inv'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
   $('#tbMenu').onclick = () => setSide(true);
   $('#side').innerHTML = `
     <a class="brand" href="#/"><img src="img/icon.png" alt=""><span>Vinylor Hub<small>automatizace</small></span></a>
@@ -381,6 +384,7 @@ function shell(active, inner) {
       ${nav('#/nabidky', 'offers', '📄', 'Nabídky')}
       ${nav('#/objednavky', 'orders', '🚚', 'Objednávky')}
       ${nav('#/sklad', 'stock', '📦', 'Naskladnění')}
+      ${nav('#/inventura', 'inv', '📋', 'Inventura')}
       ${nav('#/navstevy', 'visits', '🚶', 'Návštěvnost')}
       ${nav('#/nastenka', 'boards', '🗂️', 'Nástěnka')}
       ${hasApp('kontejnery') ? nav('#/kontejnery', 'ct', '🚢', 'Kontejnery') : '<a class="soon" href="#" title="Zatím jen pro vybrané uživatele"><span class="ico">🚢</span><span>Kontejnery</span><em>🔒</em></a>'}
@@ -602,6 +606,332 @@ async function renderHome() {
       if ($('#hCt')) $('#hCt').innerHTML = r.length ? r.map(c => `<a class="rc-row" href="#/k/${c.id}"><span class="rc-i">${svgIco('ct')}</span><div class="grow"><b>${esc(c.number || 'bez čísla')}</b> ${CT_ST[c.status] ? ctBadge(c.status) : ''}<div class="small muted">${esc(c.vessel || '')}</div></div><span class="small nowrap">ETA <b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b></span></a>`).join('') : '<div class="muted small">Žádný kontejner na cestě.</div>';
     } catch { if ($('#hCt')) $('#hCt').innerHTML = '<div class="muted small">Kontejnery nejsou k dispozici.</div>'; }
   })();
+}
+
+// ---------- Inventura ----------
+const INV_ST = { draft: ['Příprava', 'draft'], counting: ['Počítá se', 'sent'], review: ['Ke schválení', 'postponed'], done: ['Uzavřeno', 'confirmed'] };
+const INV_STEPS = ['draft', 'counting', 'review', 'done'];
+const INV_KIND = { partial: 'Dílčí inventura', annual: 'Roční inventura' };
+const INV_CHECK = ['Naskladnit všechny příjemky a svozy, které dorazily', 'Zpracovat kontejnery, které už dorazily na sklad', 'Domluvit pauzu v příjmu a expedici na dobu počítání', 'Vyřadit poškozené a rozbalené zboží, ať je to zvlášť', 'Rozdělit sklad na zóny / regály a určit počítací dvojice', 'Načíst aktuální stav skladu ze Shoptetu a vyexportovat ho (záloha)', 'Vytisknout počítací soupisy', 'Určit termín a informovat tým'];
+const INV = { ses: null, items: [], q: '', f: 'all', limit: 200, showSys: false, plus: false };
+const invNum = v => { if (v === '' || v == null) return null; const n = Number(String(v).replace(/\s/g, '').replace(',', '.')); return Number.isFinite(n) ? n : NaN; };
+const invStockId = () => Number((S.settings && S.settings.data && S.settings.data.shoptetStockId)) || 1;
+const invBadge = st => `<span class="st" data-s="${INV_ST[st][1]}">${INV_ST[st][0]}</span>`;
+const invDiff = it => (it.counted_qty == null || it.system_qty == null) ? null : Number(it.counted_qty) - Number(it.system_qty);
+const invFmtD = d => d == null ? '' : d === 0 ? '<span class="stp ok">✓ 0</span>' : `<span class="stp ${d > 0 ? 'go' : 'bad'}">${d > 0 ? '+' : '−'}${fmtQ(Math.abs(d))}</span>`;
+const invPieces = n => `${n} ${n === 1 ? 'položka' : n < 5 ? 'položky' : 'položek'}`;
+const invDownload = (name, text) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
+
+async function renderInvList() {
+  shell('inv', `<div class="pg-head"><span class="pg-ico">${svgIco('inv')}</span><div class="grow"><h1>Inventura</h1><p>Přepočty zásob a roční inventura skladu.</p></div></div><div class="panel panel-b"><div class="sk" style="height:140px"></div></div>`);
+  let rows = [];
+  try { rows = check(await sb.from('inv_sessions').select('*').order('created_at', { ascending: false }).limit(60)); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  const counts = await Promise.all(rows.map(async r => {
+    const [a, b] = await Promise.all([sb.from('inv_items').select('id', { count: 'exact', head: true }).eq('session_id', r.id), sb.from('inv_items').select('id', { count: 'exact', head: true }).eq('session_id', r.id).not('counted_qty', 'is', null)]);
+    return [r.id, a.count || 0, b.count || 0];
+  }));
+  const cm = Object.fromEntries(counts.map(c => [c[0], c]));
+  const year = new Date().getFullYear();
+  const hasAnnual = rows.some(r => r.kind === 'annual' && String(r.created_at).slice(0, 4) === String(year));
+  const card = r => { const [, tot, cnt] = cm[r.id] || [0, 0, 0]; const pct = tot ? Math.round(100 * cnt / tot) : 0;
+    return `<a class="panel inv-card" href="#/inventura/${r.id}"><div class="inv-ch"><b>${esc(r.title)}</b>${invBadge(r.status)}</div>
+      <div class="small muted">${INV_KIND[r.kind]}${r.planned_at ? ' · termín ' + czDate(r.planned_at) : ''} · založil(a) ${esc(userName(r.created_by))}, ${czDate(String(r.created_at).slice(0, 10))}</div>
+      <div class="inv-pb"><i style="width:${pct}%"></i></div><div class="small muted">${cnt} z ${tot} napočteno${r.done_at ? ' · uzavřeno ' + czDate(String(r.done_at).slice(0, 10)) : ''}</div></a>`; };
+  const act = rows.filter(r => r.status !== 'done'), done = rows.filter(r => r.status === 'done');
+  $('#main').innerHTML = `
+  <div class="pg-head"><span class="pg-ico">${svgIco('inv')}</span><div class="grow"><h1>Inventura</h1><p>Přepočty zásob a roční inventura skladu.</p></div><button class="btn primary of-new" id="invNew">＋ Nová inventura</button></div>
+  ${!hasAnnual ? `<section class="panel inv-banner"><span class="td-i" style="--c:var(--s-postponed)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${NAV_SVG.inv}</svg></span><div class="grow"><b>Roční inventura ${year}</b><div class="small muted">Celoskladová inventura na konci roku — připrav si seznam zboží, kontrolní seznam před inventurou a počítací soupisy.</div></div><button class="btn primary" id="invAnnual">Připravit roční inventuru</button></section>` : ''}
+  <h3 class="oj-h">Probíhající a připravované</h3>
+  ${act.length ? `<div class="inv-grid">${act.map(card).join('')}</div>` : '<div class="panel panel-b muted">Žádná inventura. Nová dílčí inventura: tlačítko nahoře — vybereš zboží, které se má přepočítat.</div>'}
+  ${done.length ? `<h3 class="oj-h">Uzavřené</h3><div class="inv-grid">${done.map(card).join('')}</div>` : ''}`;
+  $('#invNew').onclick = () => invCreate('partial');
+  if ($('#invAnnual')) $('#invAnnual').onclick = () => invCreate('annual');
+}
+async function invCreate(kind) {
+  const year = new Date().getFullYear();
+  const v = await modal({ title: kind === 'annual' ? 'Nová roční inventura' : 'Nová inventura',
+    body: `<label>Název</label><input data-k="t" value="${esc(kind === 'annual' ? 'Roční inventura ' + year : '')}" placeholder="např. Přepočet terasová prkna">
+      <label>Druh</label><select data-k="k"><option value="partial" ${kind === 'partial' ? 'selected' : ''}>Dílčí — jen vybrané zboží</option><option value="annual" ${kind === 'annual' ? 'selected' : ''}>Roční — celý sklad</option></select>
+      <label>Termín (nepovinné)</label><input type="date" data-k="d" value="${kind === 'annual' ? year + '-12-31' : ''}">
+      <label>Poznámka</label><textarea data-k="n" rows="2"></textarea>`, focus: '[data-k="t"]',
+    actions: [{ label: 'Zrušit', value: null }, { label: 'Založit', cls: 'primary', value: bd => ({ t: $('[data-k="t"]', bd).value.trim(), k: $('[data-k="k"]', bd).value, d: $('[data-k="d"]', bd).value || null, n: $('[data-k="n"]', bd).value.trim() }) }] });
+  if (!v) return;
+  if (!v.t) return toast('Zadej název inventury.', true);
+  try {
+    const r = check(await sb.from('inv_sessions').insert({ title: v.t, kind: v.k, planned_at: v.d, note: v.n || null, created_by: S.me.id, checklist: v.k === 'annual' ? INV_CHECK.map(t => ({ t, done: false })) : [] }).select('id').single());
+    location.hash = '#/inventura/' + r.id;
+  } catch (e) { toast(e.message, true); }
+}
+
+// ----- detail -----
+async function invLoad(id) {
+  const ses = check(await sb.from('inv_sessions').select('*').eq('id', id).single());
+  const items = await fetchAll(() => sb.from('inv_items').select('*').eq('session_id', id).order('location', { nullsFirst: false }).order('code'));
+  INV.ses = ses; INV.items = items;
+}
+async function renderInvDetail(id) {
+  shell('inv', `<div class="pg-head"><div class="sk" style="height:46px;width:300px"></div></div><div class="panel panel-b"><div class="sk" style="height:220px"></div></div>`);
+  try { await Promise.all([invLoad(id), loadSettings(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<div class="panel empty-big"><div class="ill">🔍</div><h3>Inventuru se nepodařilo otevřít</h3><p>${esc(e.message)}</p><a class="btn" href="#/inventura">← Zpět</a></div>`; return; }
+  Object.assign(INV, { q: '', f: 'all', limit: 200, showSys: false, plus: false });
+  drawInv();
+}
+const invFiltered = () => {
+  const q = fold(INV.q).trim();
+  return INV.items.filter(it => {
+    if (INV.f === 'todo' && it.counted_qty != null) return false;
+    if (INV.f === 'diff' && !(it.counted_qty != null && it.system_qty != null && Number(it.counted_qty) !== Number(it.system_qty))) return false;
+    if (INV.f === 'ok' && !(it.counted_qty != null && it.system_qty != null && Number(it.counted_qty) === Number(it.system_qty))) return false;
+    return !q || fold([it.code, it.name, it.ean, it.location, it.note].join(' ')).includes(q);
+  });
+};
+function invStats() {
+  const it = INV.items; const counted = it.filter(x => x.counted_qty != null);
+  const diffs = counted.filter(x => x.system_qty != null && Number(x.counted_qty) !== Number(x.system_qty));
+  const plus = diffs.reduce((a, x) => a + Math.max(0, invDiff(x)), 0), minus = diffs.reduce((a, x) => a + Math.max(0, -invDiff(x)), 0);
+  const noSys = counted.filter(x => x.system_qty == null).length;
+  return { total: it.length, counted: counted.length, diffs: diffs.length, plus, minus, noSys, todo: it.length - counted.length };
+}
+function invRowHtml(it, st, showSys) {
+  const d = invDiff(it); const edit = st === 'counting' || st === 'draft' || st === 'review';
+  return `<tr data-id="${it.id}"${it.applied_at ? ' class="applied"' : ''}>
+    <td class="nowrap"><b>${esc(it.code)}</b>${it.ean ? `<div class="small muted">${esc(it.ean)}</div>` : ''}</td>
+    <td>${esc(it.name || '—')}</td>
+    <td>${edit && st !== 'review' ? `<input class="inv-loc" data-f="location" value="${esc(it.location || '')}" placeholder="regál / zóna">` : esc(it.location || '—')}</td>
+    ${showSys ? `<td class="r nowrap">${it.system_qty == null ? '<span class="muted">—</span>' : fmtQ(it.system_qty)}</td>` : ''}
+    <td class="r">${st === 'counting' || st === 'review' ? `<input class="inv-q" data-f="counted" inputmode="decimal" value="${it.counted_qty == null ? '' : fmtQ(it.counted_qty).replace(/\s/g, '')}" ${it.applied_at ? 'disabled' : ''}>` : (it.counted_qty == null ? '<span class="muted">—</span>' : fmtQ(it.counted_qty))}</td>
+    ${showSys ? `<td class="r nowrap inv-d">${invFmtD(d)}${it.applied_at ? ' <span class="tag blue" title="Odesláno do Shoptetu">✓ Shoptet</span>' : ''}</td>` : ''}
+    <td>${st === 'counting' || st === 'review' ? `<input class="inv-n" data-f="note" value="${esc(it.note || '')}" placeholder="poznámka">` : esc(it.note || '')}</td>
+    <td class="r">${st === 'draft' ? `<button class="btn sm ghost" data-del="${it.id}" title="Odebrat z inventury">✕</button>` : ''}</td></tr>`;
+}
+function invTableHtml(st) {
+  const showSys = st !== 'counting' || INV.showSys;
+  const list = invFiltered(); const shown = list.slice(0, INV.limit);
+  return `<div class="panel" style="overflow-x:auto"><table class="list inv-t"><thead><tr><th>Kód / EAN</th><th>Název</th><th>Umístění</th>${showSys ? '<th class="r">V systému</th>' : ''}<th class="r">Napočteno</th>${showSys ? '<th class="r">Rozdíl</th>' : ''}<th>Poznámka</th><th></th></tr></thead>
+    <tbody>${shown.map(it => invRowHtml(it, st, showSys)).join('') || `<tr><td colspan="8" class="empty">${INV.items.length ? 'Nic nenalezeno.' : 'Zatím žádné zboží. Přidej ho v kroku Příprava.'}</td></tr>`}</tbody></table></div>
+    ${list.length > INV.limit ? `<div style="text-align:center;margin:12px"><button class="btn" id="invMore">Zobrazit dalších ${Math.min(200, list.length - INV.limit)} (zbývá ${list.length - INV.limit})</button></div>` : ''}`;
+}
+function drawInv() {
+  const ses = INV.ses, st = ses.status; const stt = invStats(); const idx = INV_STEPS.indexOf(st);
+  const acts = {
+    draft: `<button class="btn primary" id="invStart">Zahájit počítání ›</button>`,
+    counting: `<button class="btn" id="invPrint">🖨 Tisk soupisu</button><button class="btn primary" id="invReview">Předat ke kontrole ›</button>`,
+    review: `<button class="btn" id="invBack">‹ Zpět k počítání</button><button class="btn primary" id="invApply">Schválit a naskladnit do Shoptetu</button>`,
+    done: '',
+  }[st];
+  $('#main').innerHTML = `
+  <div class="pg-head"><a class="btn ghost" href="#/inventura" title="Zpět">←</a><span class="pg-ico">${svgIco('inv')}</span><div class="grow"><h1>${esc(ses.title)}</h1><p>${INV_KIND[ses.kind]}${ses.planned_at ? ' · termín ' + czDate(ses.planned_at) : ''}${ses.note ? ' · ' + esc(ses.note) : ''}</p></div>
+    ${st === 'draft' || st === 'counting' ? '<button class="btn sm ghost" id="invEdit" title="Upravit název a termín">✎</button><button class="btn sm ghost" id="invDelete" title="Smazat inventuru">🗑</button>' : ''}</div>
+  <div class="inv-steps">${INV_STEPS.map((k, i) => `<div class="inv-step ${i < idx ? 'done' : ''} ${i === idx ? 'on' : ''}"><i>${i < idx ? '✓' : i + 1}</i><span>${INV_ST[k][0]}</span></div>`).join('<b></b>')}</div>
+  <div class="kpis k4 inv-kpis"><div class="panel kpi" style="--c:var(--s-sent)"><span class="kpi-t"><span class="kpi-l">Položek v inventuře</span><b class="kpi-v">${stt.total}</b></span></div>
+    <div class="panel kpi" style="--c:var(--s-confirmed)"><span class="kpi-t"><span class="kpi-l">Napočteno</span><b class="kpi-v" id="kC">${stt.counted}</b><div class="inv-pb"><i style="width:${stt.total ? Math.round(100 * stt.counted / stt.total) : 0}%"></i></div></span></div>
+    <div class="panel kpi" style="--c:var(--s-postponed)"><span class="kpi-t"><span class="kpi-l">Rozdíly</span><b class="kpi-v" id="kD">${stt.diffs}</b></span></div>
+    <div class="panel kpi" style="--c:var(--s-rejected)"><span class="kpi-t"><span class="kpi-l">Přebytek / manko (ks)</span><b class="kpi-v" id="kPM" style="font-size:22px">+${fmtQ(stt.plus)} / −${fmtQ(stt.minus)}</b></span></div></div>
+  ${st === 'draft' ? invPrepHtml() : ''}
+  ${st === 'counting' ? `<section class="panel inv-scan"><label class="grow" style="margin:0">Rychlé zadání — naskenuj nebo napiš kód / EAN a stiskni Enter<input id="invScan" placeholder="kód nebo EAN…" autocomplete="off" inputmode="search"></label>
+    <label class="chk"><input type="checkbox" id="invPlus" ${INV.plus ? 'checked' : ''}> každé skenování = +1 ks</label><label class="chk"><input type="checkbox" id="invSys" ${INV.showSys ? 'checked' : ''}> ukázat stav v systému</label></section>` : ''}
+  <div class="of-tabsrow" style="margin-top:14px"><div class="chips" id="invF">${[['all', 'Vše'], ['todo', 'Nenapočítáno'], ['diff', 'Rozdíly'], ['ok', 'Souhlasí']].map(([k, l]) => `<button class="chip ${INV.f === k ? 'on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
+    <div class="search of-search grow"><span class="ic">⌕</span><input id="invQ" placeholder="Hledat kód, název, umístění…" value="${esc(INV.q)}"></div>
+    <button class="btn" id="invCsv">⬇ CSV</button>${st === 'draft' ? '<button class="btn" id="invPrint2">🖨 Tisk soupisu</button>' : ''}${st === 'draft' || st === 'counting' || st === 'review' ? '<button class="btn" id="invSyncSys">↻ Načíst stav ze Shoptetu</button>' : ''}${acts}</div>
+  <div id="invTbl">${invTableHtml(st)}</div>
+  ${st === 'done' ? `<p class="muted small" style="margin-top:12px">Inventura uzavřena${ses.done_at ? ' ' + czDateTime(ses.done_at) : ''}. Pohyby jsou vidět v Historii pohybů (zdroj „Inventura“).</p>` : ''}`;
+  bindInv();
+}
+function invPrepHtml() {
+  const ses = INV.ses;
+  return `<section class="panel inv-prep"><div class="dash-h"><b>Příprava — co se bude počítat</b></div><div class="dash-b">
+    <div class="inv-add"><div class="search grow"><span class="ic">⌕</span><input id="invAdd" placeholder="Přidat produkt — hledej kód, název, EAN…" autocomplete="off"></div></div><div id="invAddRes" class="inv-res"></div>
+    <div class="inv-tools"><button class="btn" id="invPaste">📋 Vložit seznam kódů</button><button class="btn" id="invGroup">🏷 Podle dodavatele / výrobce</button><button class="btn" id="invAll">📦 Celý katalog</button></div></div></section>
+  ${ses.kind === 'annual' ? `<div class="inv-two"><section class="panel dash"><div class="dash-h"><b>Kontrolní seznam před inventurou</b><span class="grow"></span><button class="btn sm" id="chkAdd">＋ Přidat</button></div><div class="dash-b nopad" id="invChk">${invChecklistHtml()}</div></section>
+    <section class="panel dash"><div class="dash-h"><b>Co ještě zbývá naskladnit</b></div><div class="dash-b" id="invReady"><div class="sk" style="height:90px"></div></div></section></div>` : ''}`;
+}
+const invChecklistHtml = () => {
+  const l = INV.ses.checklist || [];
+  return l.map((c, i) => `<label class="td-row chk-row"><input type="checkbox" data-ci="${i}" ${c.done ? 'checked' : ''}><span class="grow ${c.done ? 'done' : ''}">${esc(c.t)}</span><button class="btn sm ghost" data-cdel="${i}" title="Odebrat">✕</button></label>`).join('') + (l.length ? `<div class="small muted" style="padding:10px 18px">Hotovo ${l.filter(c => c.done).length} z ${l.length}</div>` : '<div class="td-empty">Prázdný seznam.</div>');
+};
+async function invReadiness() {
+  const el = $('#invReady'); if (!el) return;
+  const out = [];
+  try {
+    const rc = check(await sb.from('stock_receipts').select('id,doc_no,supplier,item_count,stocked_count').eq('deleted', false).order('created_at', { ascending: false }).limit(300));
+    const open = rc.filter(r => (r.item_count || 0) > (r.stocked_count || 0));
+    out.push([open.length, 'Příjemky, které nejsou celé naskladněné', open.slice(0, 4).map(r => `<a href="#/s/${r.id}">${esc(r.doc_no || r.supplier || 'příjemka')}</a>`).join(', '), '#/sklad']);
+  } catch { out.push([null, 'Příjemky — nepodařilo se načíst']); }
+  try {
+    const sh = check(await sb.from('oj_shipments').select('id,reference,title,status,lines').eq('deleted', false).eq('status', 'arrived'));
+    const open = sh.filter(x => (x.lines || []).some(l => !l.stocked && !l.skip));
+    out.push([open.length, 'Svozy, které dorazily a čekají na naskladnění', open.slice(0, 4).map(x => `<a href="#/svoz/${x.id}">${esc(x.reference || x.title || 'svoz')}</a>`).join(', '), '#/objednavky']);
+  } catch { out.push([null, 'Svozy — nepodařilo se načíst']); }
+  if (hasApp('kontejnery')) {
+    try {
+      const ct = check(await sb.from('ct_containers').select('id,number,status').in('status', ['sailing', 'port']));
+      out.push([ct.length, 'Kontejnery na cestě nebo v přístavu (dorazí-li před inventurou, počítej s nimi)', ct.slice(0, 4).map(c => `<a href="#/k/${c.id}">${esc(c.number || 'kontejner')}</a>`).join(', '), '#/kontejnery']);
+    } catch { /* bez kontejnerů */ }
+  }
+  el.innerHTML = out.map(([n, l, extra]) => n === null ? `<div class="muted small">${l}</div>` : `<div class="rdy ${n ? 'warn' : 'ok'}"><b>${n ? n : '✓'}</b><div><div>${l}</div>${extra ? `<div class="small muted">${extra}</div>` : ''}</div></div>`).join('');
+}
+async function invPatchSes(f) { check(await sb.from('inv_sessions').update({ ...f, updated_at: nowIso() }).eq('id', INV.ses.id)); Object.assign(INV.ses, f); }
+async function invAddProducts(prods) {
+  const rows = prods.filter(p => p && p.code).map(p => ({ session_id: INV.ses.id, code: p.code, name: [p.name, p.variant].filter(Boolean).join(', ') || null, ean: p.ean || null }));
+  if (!rows.length) return toast('Nic k přidání.', true);
+  for (let i = 0; i < rows.length; i += 500) check(await sb.from('inv_items').upsert(rows.slice(i, i + 500), { onConflict: 'session_id,code', ignoreDuplicates: true }));
+  const before = INV.items.length; await invLoad(INV.ses.id); drawInv();
+  toast(`Přidáno ${INV.items.length - before} z ${rows.length} (zbytek už v inventuře je)`);
+}
+async function invSyncSystem(silent) {
+  if (!INV.items.length) return toast('Nejdřív přidej zboží.', true);
+  const btn = $('#invSyncSys'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Načítám…'; }
+  try {
+    const r = await shoptetCall({ action: 'inv_supplies', stockId: invStockId(), codes: INV.items.length < 3000 ? INV.items.map(i => i.code) : undefined });
+    if (r.unknownShape && !Object.keys(r.supplies).length) throw new Error('Shoptet vrátil zásoby v neočekávaném tvaru (pole: ' + (r.sampleKeys || []).join(', ') + '). Napiš to správci.');
+    const rows = INV.items.filter(i => r.supplies[i.code] != null).map(i => ({ session_id: INV.ses.id, code: i.code, system_qty: r.supplies[i.code] }));
+    for (let i = 0; i < rows.length; i += 500) check(await sb.from('inv_items').upsert(rows.slice(i, i + 500), { onConflict: 'session_id,code' }));
+    const miss = INV.items.length - rows.length;
+    await invLoad(INV.ses.id); drawInv();
+    toast(`Stav ze Shoptetu načten u ${rows.length} položek${miss ? `, ${miss} ve Shoptetu nenalezeno` : ''}`);
+  } catch (e) { toast(e.message, true); if (btn) { btn.disabled = false; btn.textContent = '↻ Načíst stav ze Shoptetu'; } }
+}
+function invUpdateLive() {
+  const stt = invStats();
+  if ($('#kC')) { $('#kC').textContent = stt.counted; const pb = $('#kC').parentElement.querySelector('.inv-pb i'); if (pb) pb.style.width = (stt.total ? Math.round(100 * stt.counted / stt.total) : 0) + '%'; }
+  if ($('#kD')) $('#kD').textContent = stt.diffs;
+  if ($('#kPM')) $('#kPM').textContent = `+${fmtQ(stt.plus)} / −${fmtQ(stt.minus)}`;
+}
+async function invSaveField(it, f, raw, input) {
+  let val = raw;
+  if (f === 'counted') { val = invNum(raw); if (Number.isNaN(val) || (val != null && val < 0)) { toast('Zadej číslo (0 nebo víc).', true); input.value = it.counted_qty == null ? '' : fmtQ(it.counted_qty).replace(/\s/g, ''); return; } }
+  const patch = f === 'counted' ? { counted_qty: val, counted_by: val == null ? null : S.me.id, counted_at: val == null ? null : nowIso() } : f === 'location' ? { location: String(val).trim() || null } : { note: String(val).trim() || null };
+  try { check(await sb.from('inv_items').update(patch).eq('id', it.id)); Object.assign(it, patch); } catch (e) { toast(e.message, true); return; }
+  if (f === 'counted') { const tr = input.closest('tr'); const d = tr && tr.querySelector('.inv-d'); if (d) d.innerHTML = invFmtD(invDiff(it)); invUpdateLive(); }
+}
+function bindInv() {
+  const ses = INV.ses, st = ses.status;
+  const redrawTbl = () => { $('#invTbl').innerHTML = invTableHtml(st); bindInvTbl(); };
+  $$('#invF .chip').forEach(c => c.onclick = () => { INV.f = c.dataset.f; INV.limit = 200; $$('#invF .chip').forEach(x => x.classList.toggle('on', x === c)); redrawTbl(); });
+  $('#invQ').oninput = e => { INV.q = e.target.value; INV.limit = 200; redrawTbl(); };
+  $('#invCsv').onclick = () => { const rows = INV.items; invDownload(`Inventura_${fold(ses.title).replace(/[^a-z0-9]+/g, '_')}.csv`, [['kod', 'nazev', 'ean', 'umisteni', 'v_systemu', 'napocteno', 'rozdil', 'poznamka'], ...rows.map(i => [i.code, i.name || '', i.ean || '', i.location || '', i.system_qty == null ? '' : String(i.system_qty).replace('.', ','), i.counted_qty == null ? '' : String(i.counted_qty).replace('.', ','), invDiff(i) == null ? '' : String(invDiff(i)).replace('.', ','), i.note || ''])].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n')); toast('CSV staženo'); };
+  if ($('#invPrint')) $('#invPrint').onclick = invPrint; if ($('#invPrint2')) $('#invPrint2').onclick = invPrint;
+  if ($('#invSyncSys')) $('#invSyncSys').onclick = () => invSyncSystem();
+  if ($('#invEdit')) $('#invEdit').onclick = async () => {
+    const v = await modal({ title: 'Upravit inventuru', body: `<label>Název</label><input data-k="t" value="${esc(ses.title)}"><label>Termín</label><input type="date" data-k="d" value="${esc(ses.planned_at || '')}"><label>Poznámka</label><textarea data-k="n" rows="2">${esc(ses.note || '')}</textarea>`, actions: [{ label: 'Zrušit', value: null }, { label: 'Uložit', cls: 'primary', value: bd => ({ t: $('[data-k="t"]', bd).value.trim(), d: $('[data-k="d"]', bd).value || null, n: $('[data-k="n"]', bd).value.trim() || null }) }] });
+    if (!v || !v.t) return; try { await invPatchSes({ title: v.t, planned_at: v.d, note: v.n }); drawInv(); } catch (e) { toast(e.message, true); }
+  };
+  if ($('#invDelete')) $('#invDelete').onclick = async () => { if (!(await confirmBox('Smazat inventuru?', `„${ses.title}“ se všemi napočtenými údaji se smaže. Do Shoptetu se nic neposílalo.`, { ok: 'Smazat', danger: true }))) return; try { check(await sb.from('inv_sessions').delete().eq('id', ses.id)); toast('Inventura smazána'); location.hash = '#/inventura'; } catch (e) { toast(e.message, true); } };
+  if ($('#invStart')) $('#invStart').onclick = async () => {
+    if (!INV.items.length) return toast('Nejdřív přidej zboží k počítání.', true);
+    const open = (ses.checklist || []).filter(c => !c.done).length;
+    if (open && !(await confirmBox('Zahájit počítání?', `V kontrolním seznamu ještě zbývá ${open} bodů. Zahájit i tak?`, { ok: 'Zahájit' }))) return;
+    try { await invPatchSes({ status: 'counting' }); drawInv(); toast('Počítání zahájeno'); } catch (e) { toast(e.message, true); }
+  };
+  if ($('#invReview')) $('#invReview').onclick = async () => {
+    const stt = invStats();
+    if (stt.todo && !(await confirmBox('Předat ke kontrole?', `${invPieces(stt.todo)} ještě není napočtených. Nenapočtené se do Shoptetu neposílají (stav zůstane beze změny).`, { ok: 'Předat ke kontrole' }))) return;
+    try { await invPatchSes({ status: 'review' }); INV.f = 'all'; drawInv(); } catch (e) { toast(e.message, true); }
+  };
+  if ($('#invBack')) $('#invBack').onclick = async () => { try { await invPatchSes({ status: 'counting' }); drawInv(); } catch (e) { toast(e.message, true); } };
+  if ($('#invApply')) $('#invApply').onclick = invApply;
+  if ($('#invSys')) $('#invSys').onchange = e => { INV.showSys = e.target.checked; drawInv(); };
+  if ($('#invPlus')) $('#invPlus').onchange = e => { INV.plus = e.target.checked; };
+  if ($('#invScan')) $('#invScan').onkeydown = async e => {
+    if (e.key !== 'Enter') return; e.preventDefault(); const v = e.target.value.trim(); if (!v) return; const f = fold(v);
+    let it = INV.items.find(x => fold(x.code) === f || (x.ean && fold(x.ean) === f));
+    if (!it) {
+      const p = (S.products || []).find(x => x.fcode === f || (x.ean && fold(x.ean) === f) || (x.mpn && fold(x.mpn) === f));
+      if (!p) { toast(`„${v}“ — kód nenalezen.`, true); e.target.select(); return; }
+      if (!(await confirmBox('Není v inventuře', `${p.code} — ${p.name} není v této inventuře. Přidat?`, { ok: 'Přidat' }))) return;
+      await invAddProducts([p]); it = INV.items.find(x => x.code === p.code); if (!it) return;
+    }
+    if (INV.plus) {
+      const nv = (it.counted_qty == null ? 0 : Number(it.counted_qty)) + 1;
+      const tr = $(`#invTbl tr[data-id="${it.id}"]`); const inp = tr && tr.querySelector('.inv-q');
+      if (inp) { inp.value = nv; await invSaveField(it, 'counted', String(nv), inp); inp.value = fmtQ(nv).replace(/\s/g, ''); tr.scrollIntoView({ block: 'center', behavior: 'smooth' }); tr.classList.remove('flash'); void tr.offsetWidth; tr.classList.add('flash'); }
+      else { await invSaveField(it, 'counted', String(nv), document.createElement('input')); toast(`${it.code}: ${nv}`); }
+    } else {
+      INV.f = 'all'; INV.q = ''; $('#invQ').value = ''; INV.limit = Math.max(INV.limit, INV.items.indexOf(it) + 5); redrawTbl();
+      const tr = $(`#invTbl tr[data-id="${it.id}"]`); if (tr) { tr.scrollIntoView({ block: 'center' }); const inp = tr.querySelector('.inv-q'); if (inp) { inp.focus(); inp.select(); } }
+    }
+    e.target.value = ''; e.target.focus();
+  };
+  // příprava
+  if (st === 'draft') {
+    let t = null;
+    $('#invAdd').oninput = e => { clearTimeout(t); t = setTimeout(() => {
+      const res = searchProducts(e.target.value, true).slice(0, 12);
+      $('#invAddRes').innerHTML = res.map(p => `<button class="inv-r" data-code="${esc(p.code)}"><b>${esc(p.code)}</b> ${esc(p.name)}${p.variant ? ', ' + esc(p.variant) : ''}${INV.items.some(i => i.code === p.code) ? ' <span class="tag blue">už v inventuře</span>' : ''}</button>`).join('');
+      $$('#invAddRes .inv-r').forEach(b => b.onclick = async () => { const p = S.products.find(x => x.code === b.dataset.code); $('#invAdd').value = ''; $('#invAddRes').innerHTML = ''; try { await invAddProducts([p]); } catch (er) { toast(er.message, true); } });
+    }, 120); };
+    $('#invPaste').onclick = async () => {
+      const v = await modal({ title: 'Vložit seznam kódů', body: '<p class="muted small">Kódy produktů, EAN nebo MPN — každý na nový řádek (nebo oddělené čárkou / středníkem). Můžeš vložit sloupec z Excelu.</p><textarea data-k="l" rows="10" style="font-family:var(--mono, monospace)"></textarea>', focus: '[data-k="l"]', actions: [{ label: 'Zrušit', value: null }, { label: 'Přidat do inventury', cls: 'primary', value: bd => $('[data-k="l"]', bd).value }] });
+      if (!v) return;
+      const toks = [...new Set(v.split(/[\n\r,;\t]+/).map(x => x.trim()).filter(Boolean))];
+      const idx = new Map(); for (const p of S.products) { idx.set(p.fcode, p); if (p.ean) idx.set(fold(p.ean), p); if (p.mpn) idx.set(fold(p.mpn), p); }
+      const found = [], miss = []; for (const k of toks) { const p = idx.get(fold(k)); if (p) found.push(p); else miss.push(k); }
+      try { if (found.length) await invAddProducts(found); } catch (e) { return toast(e.message, true); }
+      if (miss.length) await modal({ title: `Nenalezeno ${miss.length} kódů`, body: `<p class="muted small">Tyto kódy nejsou v katalogu Hubu (zkontroluj překlepy nebo synchronizaci produktů):</p><textarea rows="6" readonly style="font-family:var(--mono, monospace)">${esc(miss.join('\n'))}</textarea>`, actions: [{ label: 'Rozumím', value: true }] });
+    };
+    $('#invGroup').onclick = async () => {
+      const cnt = f => { const m = new Map(); for (const p of S.products) if (p.visible && p[f]) m.set(p[f], (m.get(p[f]) || 0) + 1); return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'cs')); };
+      const sup = cnt('supplier'), man = cnt('manufacturer');
+      const v = await modal({ title: 'Přidat podle dodavatele / výrobce', body: `<label>Dodavatel</label><select data-k="s"><option value="">— nevybráno —</option>${sup.map(([k, n]) => `<option value="${esc(k)}">${esc(k)} (${n})</option>`).join('')}</select><label>Výrobce</label><select data-k="m"><option value="">— nevybráno —</option>${man.map(([k, n]) => `<option value="${esc(k)}">${esc(k)} (${n})</option>`).join('')}</select><p class="muted small">Přidají se viditelné produkty z e-shopu, které odpovídají výběru.</p>`, actions: [{ label: 'Zrušit', value: null }, { label: 'Přidat', cls: 'primary', value: bd => ({ s: $('[data-k="s"]', bd).value, m: $('[data-k="m"]', bd).value }) }] });
+      if (!v || (!v.s && !v.m)) return;
+      const list = S.products.filter(p => p.visible && (!v.s || p.supplier === v.s) && (!v.m || p.manufacturer === v.m));
+      try { await invAddProducts(list); } catch (e) { toast(e.message, true); }
+    };
+    $('#invAll').onclick = async () => {
+      const list = S.products.filter(p => p.visible);
+      if (!(await confirmBox('Přidat celý katalog?', `Do inventury se přidá ${list.length} viditelných produktů z e-shopu (skryté ne). Hodí se pro celoskladovou inventuru.`, { ok: 'Přidat vše' }))) return;
+      try { await invAddProducts(list); } catch (e) { toast(e.message, true); }
+    };
+    if (ses.kind === 'annual') {
+      invReadiness();
+      const bindChk = () => {
+        $$('#invChk [data-ci]').forEach(c => c.onchange = async () => { const l = ses.checklist.map((x, i) => i === Number(c.dataset.ci) ? { ...x, done: c.checked } : x); try { await invPatchSes({ checklist: l }); $('#invChk').innerHTML = invChecklistHtml(); bindChk(); } catch (e) { toast(e.message, true); } });
+        $$('#invChk [data-cdel]').forEach(b => b.onclick = async e => { e.preventDefault(); const l = ses.checklist.filter((_, i) => i !== Number(b.dataset.cdel)); try { await invPatchSes({ checklist: l }); $('#invChk').innerHTML = invChecklistHtml(); bindChk(); } catch (er) { toast(er.message, true); } });
+      };
+      bindChk();
+      $('#chkAdd').onclick = async () => { const v = await promptBox('Nový bod seznamu', 'Co je potřeba udělat před inventurou?', '', { ok: 'Přidat' }); if (!v || !v.trim()) return; try { await invPatchSes({ checklist: [...(ses.checklist || []), { t: v.trim(), done: false }] }); $('#invChk').innerHTML = invChecklistHtml(); bindChk(); } catch (e) { toast(e.message, true); } };
+    }
+  }
+  bindInvTbl();
+}
+function bindInvTbl() {
+  const st = INV.ses.status; const tb = $('#invTbl'); if (!tb) return;
+  if ($('#invMore')) $('#invMore').onclick = () => { INV.limit += 200; tb.innerHTML = invTableHtml(st); bindInvTbl(); };
+  $$('[data-del]', tb).forEach(b => b.onclick = async () => { try { check(await sb.from('inv_items').delete().eq('id', b.dataset.del)); INV.items = INV.items.filter(x => x.id !== b.dataset.del); b.closest('tr').remove(); invUpdateLive(); } catch (e) { toast(e.message, true); } });
+  $$('input[data-f]', tb).forEach(inp => {
+    const row = () => INV.items.find(x => x.id === inp.closest('tr').dataset.id);
+    inp.onchange = () => { const it = row(); if (it) invSaveField(it, inp.dataset.f, inp.value, inp); };
+    inp.onfocus = () => inp.select && inp.select();
+    inp.onkeydown = e => { if (e.key !== 'Enter') return; e.preventDefault(); inp.blur(); const sel = 'input[data-f="' + inp.dataset.f + '"]:not([disabled])'; const all = $$(sel, tb); const nx = all[all.indexOf(inp) + 1]; if (nx) { nx.focus(); nx.scrollIntoView({ block: 'center' }); } };
+  });
+}
+function invPrint() {
+  const ses = INV.ses; const rows = INV.items.slice().sort((a, b) => String(a.location || '~').localeCompare(String(b.location || '~'), 'cs') || a.code.localeCompare(b.code));
+  let el = $('#invPrintArea'); if (!el) { el = document.createElement('div'); el.id = 'invPrintArea'; document.body.appendChild(el); }
+  el.innerHTML = `<h2>${esc(ses.title)}</h2><p>${INV_KIND[ses.kind]} · vytištěno ${czDateTime(nowIso())}${ses.planned_at ? ' · termín ' + czDate(ses.planned_at) : ''} · ${rows.length} položek · počítal(a): ______________________ &nbsp; datum: ____________</p>
+    <table><thead><tr><th style="width:90px">Umístění</th><th style="width:120px">Kód</th><th>Název</th><th style="width:110px">Napočteno</th><th style="width:150px">Poznámka</th></tr></thead><tbody>${rows.map(i => `<tr><td>${esc(i.location || '')}</td><td>${esc(i.code)}</td><td>${esc(i.name || '')}</td><td></td><td></td></tr>`).join('')}</tbody></table>`;
+  window.onafterprint = () => { const e = $('#invPrintArea'); if (e) e.remove(); window.onafterprint = null; };
+  window.print();
+}
+async function invApply() {
+  const ses = INV.ses;
+  const send = INV.items.filter(i => i.counted_qty != null && !i.applied_at && !(i.system_qty != null && Number(i.system_qty) === Number(i.counted_qty)));
+  if (!send.length) { if (INV.items.some(i => i.counted_qty != null)) { try { await invPatchSes({ status: 'done', done_at: nowIso() }); drawInv(); toast('Inventura uzavřena — nebyl žádný rozdíl.'); } catch (e) { toast(e.message, true); } } else toast('Není co odesílat.', true); return; }
+  const stt = invStats(); const unknown = send.filter(i => i.system_qty == null).length;
+  const ok = await modal({ title: 'Schválit a naskladnit do Shoptetu?', body: `<p>Do Shoptetu se u <b>${invPieces(send.length)}</b> nastaví <b>fyzický stav skladu</b> na napočtené množství (přebytek +${fmtQ(stt.plus)} ks, manko −${fmtQ(stt.minus)} ks).</p><p>Jde o <b>přepsání stavu</b>, ne přírůstek — automaticky se to nedá vrátit. Každá položka se pošle nejvýš jednou.</p>${unknown ? `<p class="muted small">U ${unknown} položek neznáme původní stav ze Shoptetu (rozdíl nelze ukázat). Můžeš je předem načíst tlačítkem „↻ Načíst stav ze Shoptetu“.</p>` : ''}<p class="muted small">Sklad č. ${invStockId()}.</p>`, actions: [{ label: 'Zrušit', value: false }, { label: 'Schválit a odeslat', cls: 'primary', value: true }] });
+  if (!ok) return;
+  const btn = $('#invApply'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Odesílám…'; }
+  const errors = []; let okN = 0, dup = 0, done = false;
+  try {
+    for (let i = 0; i < send.length; i += 50) {
+      const chunk = send.slice(i, i + 50);
+      const r = await shoptetCall({ action: 'inv_apply', sessionId: ses.id, stockId: invStockId(), items: chunk.map(x => ({ id: x.id, code: x.code, counted: Number(x.counted_qty), system: x.system_qty })) });
+      for (const x of r.results) { if (x.status === 'ok') okN++; else if (x.status === 'duplicate') dup++; else errors.push(`${x.code}: ${x.message}`); }
+      done = r.done; toast(`Odesláno ${Math.min(i + 50, send.length)} z ${send.length}…`);
+    }
+  } catch (e) { errors.push(e.message); }
+  await invLoad(ses.id); drawInv();
+  if (errors.length || dup) await modal({ title: 'Odeslání do Shoptetu — výsledek', body: `<p><b>${okN}</b> položek odesláno${dup ? `, ${dup} už bylo odesláno dříve` : ''}${errors.length ? `, <b style="color:var(--danger)">${errors.length} chyb</b>` : ''}.</p>${errors.length ? `<textarea rows="8" readonly>${esc(errors.join('\n'))}</textarea><p class="muted small">Inventura zůstává „ke schválení“ — po opravě můžeš odeslat zbytek znovu (už odeslané se neposílají podruhé).</p>` : ''}`, actions: [{ label: 'Zavřít', value: true }] });
+  else toast(done ? `Hotovo — ${okN} položek nastaveno ve Shoptetu, inventura uzavřena ✓` : `Odesláno ${okN} položek`);
 }
 
 // ---------- přehled nabídek ----------

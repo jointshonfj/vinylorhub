@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.30.0';
+export const APP_VERSION = '0.31.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.31.0', d: '2026-11-18', t: ['Nová aplikace Inventura: dílčí inventury (vybereš zboží, spočítáš, zkontroluješ rozdíly) a roční celoskladová inventura s kontrolním seznamem a přehledem, co ještě zbývá naskladnit', 'Počítání: rychlé zadání kódu / EAN (i skenerem), slepé počítání bez stavu v systému, umístění (regál / zóna), tisk počítacích soupisů, export CSV', 'Schválení: po kontrole se napočtený fyzický stav nastaví ve Shoptetu (jen po potvrzení, každá položka nejvýš jednou); pohyby jsou v Historii pohybů'] },
   { v: '0.30.0', d: '2026-11-18', t: ['Nový úvodní Přehled (první položka menu): co teď udělat, aktivita nabídek, kontejnery na cestě a nástěnka objednávek dodavatelů na jedné obrazovce', 'Nabídky: nový vzhled — záložky Přehled / Nástěnka / Seznam / Archiv, kompaktní pás statistik s grafem, barevné sloupce, tabulka všech nabídek pod nástěnkou', 'Nabídky jsou nově na adrese #/nabidky, úvodní stránka je Přehled'] },
   { v: '0.29.0', d: '2026-11-18', t: ['Nový vzhled celého Hubu: světlé menu s čárovými ikonami, horní lišta s hledáním (⌘K) a datem, kulatější karty a čistší barvy', 'Objednávky → Přehled jako dashboard: karty K objednání / Objednáno / Na cestě / Doručeno / K zaplacení, mini nástěnka, poslední objednávky u dodavatelů, platby, příjemky, kontejnery a historie pohybů na jedné obrazovce'] },
   { v: '0.28.1', d: '2026-11-16', t: ['Objednávky: tlačítko „Kopírovat soupis“ u sloupců nástěnky (Objednáno, Na cestě…) a v záložce Potvrzení — čísla objednávek u dodavatele + reference jako tabulka do Excelu, seznam nebo čárkami'] },
