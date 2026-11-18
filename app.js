@@ -300,6 +300,7 @@ async function routeInner() {
   if (h === '#/sklad') return renderStock();
   if (h === '#/pohyby') return renderMoves();
   if (h === '#/zasoby') return renderZasoby();
+  if (h === '#/rozvozy') return renderRozvozy();
   if (h === '#/inventura') return renderInvList();
   if ((m = h.match(/^#\/inventura\/([\w-]+)/))) return renderInvDetail(m[1]);
   if (h === '#/svozy' || h === '#/objednavky') return renderOj();
@@ -333,6 +334,7 @@ const NAV_SVG = {
   home: '<path d="M3.5 11 12 4l8.5 7M6 9.5V20h12V9.5M10 20v-6h4v6"/>',
   offers: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
   orders: '<path d="M2 6h11v10H2zM13 9h5l3 3v4h-8"/><circle cx="6.5" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
+  rz: '<path d="M12 21s-6-5.2-6-10a6 6 0 1 1 12 0c0 4.8-6 10-6 10z"/><circle cx="12" cy="11" r="2.2"/>',
   zs: '<path d="M4 20V9M10 20V4M16 20v-8M22 20H2"/><path d="m14 6 3-3 3 3"/>',
   inv: '<rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4h6v3H9zM9 14l2 2 4-4"/>',
   stock: '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/>',
@@ -347,7 +349,7 @@ const NAV_SVG = {
 };
 const svgIco = k => `<svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_SVG[k] || ''}</svg>`;
 const pgHead = (key, title, sub = '', right = '') => `<div class="pg-head"><span class="pg-ico">${svgIco(key)}</span><div class="grow"><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div>${right}</div>`;
-const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', inv: 'Inventura', zs: 'Zásoby', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
+const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', inv: 'Inventura', zs: 'Zásoby', rz: 'Rozvozy', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
 function shell(active, inner) {
   const nav = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ico">${svgIco(key)}</span><span>${label}</span></a>`;
   if (!$('.shell')) {
@@ -389,6 +391,7 @@ function shell(active, inner) {
       ${nav('#/sklad', 'stock', '📦', 'Naskladnění')}
       ${nav('#/inventura', 'inv', '📋', 'Inventura')}
       ${nav('#/zasoby', 'zs', '📈', 'Zásoby')}
+      ${nav('#/rozvozy', 'rz', '📍', 'Rozvozy')}
       ${nav('#/navstevy', 'visits', '🚶', 'Návštěvnost')}
       ${nav('#/nastenka', 'boards', '🗂️', 'Nástěnka')}
       ${hasApp('kontejnery') ? nav('#/kontejnery', 'ct', '🚢', 'Kontejnery') : '<a class="soon" href="#" title="Zatím jen pro vybrané uživatele"><span class="ico">🚢</span><span>Kontejnery</span><em>🔒</em></a>'}
@@ -832,6 +835,197 @@ async function zsHomeCard() {
     if (!al.length) return put(`<div class="muted small" style="padding:4px 2px">✅ Všech ${rows.length} sledovaných produktů má dost zásob.</div>`);
     put(al.slice(0, 5).map(r => `<a class="rc-row" href="#/zasoby"><span class="stp ${ZS_ST[r.st][1]}">${ZS_ST[r.st][0]}</span><div class="grow"><b>${esc(r.code)}</b> <span class="small muted">${esc(r.p.name)}</span></div><span class="small nowrap">skladem <b>${fmtQ(r.stock)}</b>${r.need ? ` · doobjednat <b>${fmtQ(r.need)}</b>` : ''}</span></a>`).join('') + (al.length > 5 ? `<div class="small muted" style="padding:6px 2px">+ ${al.length - 5} dalších v Zásobách</div>` : ''));
   } catch { put('<div class="muted small">Zásoby nejsou k dispozici.</div>'); }
+}
+// =====================================================================
+// ROZVOZY: objednávky k rozvozu na mapě, oblasti, výběr zastávek, optimalizace pořadí a trasa (Mapy.com)
+// data: CSV export objednávek ze Shoptetu → edge funkce hub-rozvoz → tabulka rozvoz_orders
+// =====================================================================
+const RZ_ST = [['Nevyřízená', 'NEVYŘÍZENÁ', '#FF1F2D', '#fff'], ['Zaplaceno', 'ZAPLACENO', '#00C853', '#fff'], ['Vyřizuje se', 'VYŘIZUJE SE', '#FF6D00', '#fff'], ['SKLAD', 'SKLAD', '#8E24AA', '#fff'],
+  ['Zabaleno - připraveno k expedici', 'ZABALENO', '#1565FF', '#fff'], ['Čeká na vyzvednutí přepravcem', 'ČEKÁ NA VYZVEDNUTÍ', '#00A6D6', '#fff'], ['Nedoplatek dopravy', 'NEDOPLATEK DOPRAVY', '#E91E63', '#fff'], ['Naše doprava', 'NAŠE DOPRAVA', '#FFD600', '#171717']];
+const RZ_READY = ['SKLAD', 'Zabaleno - připraveno k expedici', 'Čeká na vyzvednutí přepravcem', 'Nedoplatek dopravy', 'Naše doprava'];
+const RZ_WH = { name: 'Sklad Vinylor', address: 'V Lukách 293, Příbram', lat: 49.6992203, lng: 14.0045589 };
+const RZ_COLORS = ['#08752f', '#2f80c9', '#e4a32b', '#a36ad2', '#08a1a7', '#df6a55', '#6f8e36'];
+const RZ_RADIUS = 35, RZ_MAX = 16;
+const RZ = { orders: [], cfg: null, group: 'ALL', status: 'ALL', q: '', seq: [], mapType: 'basic', map: null, tile: null, mk: null, rt: null, route: null, sync: false };
+async function rzCall(body) {
+  const { data, error } = await sb.functions.invoke('hub-rozvoz', { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch {} throw new Error(msg); }
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+const rzMeta = st => { const m = RZ_ST.find(x => x[0] === st); return m ? { label: m[1], color: m[2], text: m[3] } : { label: st || 'Bez stavu', color: '#52605A', text: '#fff' }; };
+const rzKm = (a, b, c, d) => { const r = x => x * Math.PI / 180; const h = Math.sin(r(c - a) / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(r(d - b) / 2) ** 2; return 12742 * Math.asin(Math.sqrt(h)); };
+const rzHasXY = o => o.lat != null && o.lng != null && o.lat !== 0 && o.lng !== 0;
+const rzMoney = n => (Number(n) || 0).toLocaleString('cs-CZ', { maximumFractionDigits: 0 }) + ' Kč';
+const rzCompact = n => { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toLocaleString('cs-CZ', { maximumFractionDigits: 2 }) + ' mil.' : n >= 1e3 ? Math.round(n / 1e3).toLocaleString('cs-CZ') + ' tis.' : rzMoney(n); };
+async function rzLoad() {
+  const [cfg, rows] = await Promise.all([rzCall({ action: 'config_get' }), fetchAll(() => sb.from('rozvoz_orders').select('*').order('code', { ascending: false }))]);
+  RZ.cfg = cfg; RZ.orders = rows.map(r => ({ ...r, lat: r.lat == null ? null : Number(r.lat), lng: r.lng == null ? null : Number(r.lng), total: Number(r.total), paid: Number(r.paid) }));
+  RZ.seq = RZ.seq.filter(c => RZ.orders.some(o => o.code === c)); RZ.route = null; rzAssign();
+}
+// oblasti: objednávky do 35 km od sebe se spojují (řetězově)
+function rzAssign() {
+  RZ.orders.forEach(o => { o.group = 'Samostatné'; o.groupName = 'Samostatné'; o.groupColor = '#df6a55'; });
+  const v = RZ.orders.filter(rzHasXY); const seen = new Set(); let gid = 1;
+  for (let i = 0; i < v.length; i++) {
+    if (seen.has(i)) continue; const comp = []; const q = [i]; seen.add(i);
+    while (q.length) { const c = q.shift(); comp.push(c); for (let j = 0; j < v.length; j++) { if (seen.has(j)) continue; if (rzKm(v[c].lat, v[c].lng, v[j].lat, v[j].lng) <= RZ_RADIUS) { seen.add(j); q.push(j); } } }
+    if (comp.length < 2) continue;
+    const id = 'G' + gid, color = RZ_COLORS[(gid - 1) % RZ_COLORS.length]; gid++;
+    const cnt = {}; comp.forEach(k => { const c = v[k].city || 'Oblast'; cnt[c] = (cnt[c] || 0) + 1; });
+    const name = (Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0] || 'Oblast') + ' a okolí';
+    comp.forEach(k => { v[k].group = id; v[k].groupName = name; v[k].groupColor = color; });
+  }
+}
+const rzGroups = () => { const g = {}; RZ.orders.forEach(o => { (g[o.group] = g[o.group] || { id: o.group, name: o.groupName, color: o.groupColor, items: [], cities: {} }).items.push(o); if (o.city) g[o.group].cities[o.city] = 1; }); return Object.values(g).sort((a, b) => a.id === 'Samostatné' ? 1 : b.id === 'Samostatné' ? -1 : b.items.length - a.items.length); };
+const rzBase = () => { const q = fold(RZ.q).trim(); return RZ.orders.filter(o => (RZ.group === 'ALL' || o.group === RZ.group) && (!q || fold([o.code, o.city, o.zip, o.address, o.groupName, o.status, o.items].join(' ')).includes(q))); };
+const rzShown = () => rzBase().filter(o => RZ.status === 'ALL' || o.status === RZ.status);
+async function renderRozvozy() {
+  shell('rz', `${pgHead('rz', 'Rozvozy', 'Plánování rozvozů objednávek na mapě.')}<div class="panel panel-b"><div class="sk" style="height:300px"></div></div>`);
+  try { await Promise.all([loadSettings(), rzLoad()]); } catch (e) { $('#main').innerHTML = `${pgHead('rz', 'Rozvozy', '')}<div class="panel panel-b"><p class="err">${esc(e.message)}</p></div>`; return; }
+  drawRozvozy();
+}
+function drawRozvozy() {
+  if (location.hash !== '#/rozvozy') return;
+  if (RZ.map) { try { RZ.map.remove(); } catch {} RZ.map = null; }
+  const admin = S.me && S.me.role === 'admin'; const c = RZ.cfg || {};
+  const head = pgHead('rz', 'Rozvozy', 'Plánování rozvozů objednávek na mapě — oblasti, výběr zastávek a trasa.', `<span class="muted small" id="rzLast">${c.syncedAt ? 'Shoptet: ' + ago(c.syncedAt) : 'zatím nenačteno'}</span>${c.hasCsv ? '<button class="btn" id="rzSync">↻ Načíst ze Shoptetu</button>' : ''}${admin ? '<button class="btn" id="rzCfg">⚙ Propojení</button>' : ''}`);
+  if (!c.hasCsv || !c.tileKey) {
+    $('#main').innerHTML = `${head}<div class="panel empty-big"><div class="ill">🗺️</div><h3>Rozvozy ještě nejsou propojené</h3><p>${admin ? 'Zadej odkaz na CSV export objednávek ze Shoptetu a klíče Mapy.com. Najdeš je ve starém Apps Scriptu: Nastavení projektu → Vlastnosti skriptu (<code>SHOPTET_EXPORT_URL</code>, <code>MAPY_TILE_API_KEY</code>, <code>MAPY_API_KEY_SERVER</code>).' : 'Propojení musí nejdřív nastavit správce.'}</p>${admin ? '<button class="btn primary" id="rzCfg2">⚙ Nastavit propojení</button>' : ''}</div>`;
+    if ($('#rzCfg')) $('#rzCfg').onclick = rzConfig; if ($('#rzCfg2')) $('#rzCfg2').onclick = rzConfig; return;
+  }
+  $('#main').innerHTML = `${head}<div class="stats" id="rzStats"></div>
+  <div class="oj-bar"><div class="search oj-q"><span class="ic">⌕</span><input id="rzq" placeholder="Hledat objednávku, město, adresu, zboží…" value="${esc(RZ.q)}"></div><div class="chips" id="rzSt"></div><span class="grow"></span>
+    <div class="seg" id="rzMt"><button data-m="basic" class="${RZ.mapType === 'basic' ? 'on' : ''}">Základní</button><button data-m="aerial" class="${RZ.mapType === 'aerial' ? 'on' : ''}">Letecká</button></div></div>
+  <div class="rz-grid"><div class="panel rz-mapw"><div id="rzMap"></div><div class="rz-sum" id="rzSum"></div>
+      <div class="rz-route" id="rzRoute" hidden><div class="rz-m"><span>Zastávky</span><b id="rzRs"></b></div><div class="rz-m"><span>Trasa</span><b id="rzRd"></b></div><div class="rz-m"><span>Čas</span><b id="rzRt"></b></div><div class="rz-m"><span>Hodnota</span><b id="rzRv"></b></div>
+        <button class="btn sm" id="rzOpen">Otevřít v Mapy.com</button><button class="btn sm" id="rzNav">Navigovat</button><button class="btn sm" id="rzClr" title="Zrušit trasu">✕</button></div></div>
+    <div class="rz-side"><section class="panel dash rz-areas-p"><div class="dash-h">${svgIco('rz')}<b>Doporučené oblasti</b><span class="grow"></span><button class="btn sm" id="rzAll">Zobrazit vše</button></div><div id="rzAreas" class="rz-areas"></div></section>
+      <section class="panel dash rz-orders-p"><div class="dash-h"><b id="rzTitle">Všechny objednávky</b><span class="grow"></span><span class="tag blue" id="rzSelN">0 vybráno</span></div>
+        <div class="rz-tb"><label class="chk ns-all"><input type="checkbox" id="rzSelAll"> Vybrat zobrazené</label><span class="grow"></span><button class="btn sm" id="rzOpt">Optimalizovat pořadí</button><button class="btn sm primary" id="rzDraw">Vykreslit trasu</button></div>
+        <div id="rzMsg" class="rz-msg" hidden></div><div id="rzOrders" class="rz-list"></div></section></div></div>`;
+  $('#rzq').oninput = e => { RZ.q = e.target.value; rzClearRoute(); rzRender(true); };
+  $$('#rzMt button').forEach(b => b.onclick = () => { RZ.mapType = b.dataset.m; $$('#rzMt button').forEach(x => x.classList.toggle('on', x === b)); rzTiles(); });
+  $('#rzAll').onclick = () => { RZ.group = 'ALL'; rzClearRoute(); rzRender(true); };
+  $('#rzSelAll').onchange = e => { rzBulk(e.target.checked); };
+  $('#rzOpt').onclick = rzOptimize; $('#rzDraw').onclick = rzDraw; $('#rzClr').onclick = () => { rzClearRoute(); rzRender(false); };
+  $('#rzOpen').onclick = () => rzOpenUrl(false); $('#rzNav').onclick = () => rzOpenUrl(true);
+  if ($('#rzSync')) $('#rzSync').onclick = rzSync; if ($('#rzCfg')) $('#rzCfg').onclick = rzConfig;
+  rzRender(false); rzInitMap();
+}
+async function rzInitMap() {
+  const el = $('#rzMap'); if (!el) return;
+  let L; try { L = await loadLeaflet(); } catch (e) { el.innerHTML = `<p class="muted small" style="padding:14px">${esc(e.message)}</p>`; return; }
+  if (!$('#rzMap')) return;
+  RZ.map = L.map(el, { zoomControl: true }).setView([49.8, 15.5], 7);
+  rzTiles();
+  const icon = L.divIcon({ className: '', html: '<div class="rz-mk rz-wh">⌂</div>', iconSize: [44, 50], iconAnchor: [22, 46] });
+  L.marker([RZ_WH.lat, RZ_WH.lng], { icon }).addTo(RZ.map).bindPopup(`<b>${esc(RZ_WH.name)}</b><br>${esc(RZ_WH.address)}`);
+  RZ.mk = L.layerGroup().addTo(RZ.map); RZ.rt = L.layerGroup().addTo(RZ.map);
+  rzMarkers(true); setTimeout(() => RZ.map && RZ.map.invalidateSize(), 200);
+}
+function rzTiles() {
+  if (!RZ.map || !window.L) return; if (RZ.tile) RZ.map.removeLayer(RZ.tile);
+  RZ.tile = L.tileLayer(`https://api.mapy.cz/v1/maptiles/${RZ.mapType}/256/{z}/{x}/{y}?apikey=${encodeURIComponent(RZ.cfg.tileKey)}`, { minZoom: 0, maxZoom: 19, attribution: '<a href="https://mapy.com/" target="_blank" rel="noopener">Mapy.com</a> © Seznam.cz, a.s.' }).addTo(RZ.map);
+  RZ.tile.bringToBack();
+}
+const rzPos = code => { const i = RZ.seq.indexOf(code); return i === -1 ? 0 : i + 1; };
+function rzMarkers(fit) {
+  if (!RZ.map || !RZ.mk) return; RZ.mk.clearLayers(); const pts = [];
+  for (const o of rzShown()) {
+    if (!rzHasXY(o)) continue; const m = rzMeta(o.status); const pos = rzPos(o.code);
+    const icon = L.divIcon({ className: '', html: `<div class="rz-mk${pos ? ' sel' : ''}" style="--mc:${m.color};--mt:${m.text}">${esc(pos ? String(pos) : o.code.slice(-4))}<span class="rz-mk-l">${esc(m.label)}</span></div>`, iconSize: [72, 58], iconAnchor: [36, 52] });
+    const mk = L.marker([o.lat, o.lng], { icon }).bindTooltip(esc(o.code + ' · ' + (o.city || '')), { direction: 'top', offset: [0, -38], opacity: .94 });
+    mk.on('click', () => rzDetail(o)); mk.addTo(RZ.mk); pts.push([o.lat, o.lng]);
+  }
+  if (RZ.route) RZ.route.latlngs.forEach(p => pts.push(p));
+  if (fit) { if (pts.length) RZ.map.fitBounds(pts, { paddingTopLeft: [50, 70], paddingBottomRight: [50, 50], maxZoom: 13 }); else RZ.map.setView([49.8, 15.5], 7); }
+}
+function rzRender(fit) {
+  const all = RZ.orders; const groups = rzGroups(); const base = rzBase(); const shown = rzShown();
+  const ready = all.filter(o => RZ_READY.includes(o.status)).length; const noXY = all.filter(o => !rzHasXY(o)).length;
+  const st = (k, v, sub, c) => `<div class="panel stat" style="--c:${c}"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`;
+  $('#rzStats').innerHTML = st('Objednávek', all.length, noXY ? `${noXY} bez souřadnic` : 'všechny na mapě', 'var(--brand)') + st('Oblastí', groups.filter(g => g.id !== 'Samostatné').length, 'doporučených (do 35 km)', 'var(--s-sent)') + st('Připraveno', ready, 'k rozvozu', 'var(--s-confirmed)') + st('Hodnota', rzCompact(all.reduce((t, o) => t + o.total, 0)), 'všech objednávek', 'var(--s-postponed)');
+  $('#rzSt').innerHTML = `<button class="chip ${RZ.status === 'ALL' ? 'on' : ''}" data-s="ALL">Vše <span class="tag grey">${base.length}</span></button>` + RZ_ST.map(([k, l, c]) => { const n = base.filter(o => o.status === k).length; return n ? `<button class="chip ${RZ.status === k ? 'on' : ''}" data-s="${esc(k)}"><i class="rz-dot" style="background:${c}"></i>${l} <span class="tag grey">${n}</span></button>` : ''; }).join('');
+  $$('#rzSt .chip').forEach(b => b.onclick = () => { RZ.status = b.dataset.s; rzClearRoute(); rzRender(true); });
+  $('#rzAll').classList.toggle('primary', RZ.group === 'ALL');
+  $('#rzAreas').innerHTML = groups.map(g => { const rd = g.items.filter(o => RZ_READY.includes(o.status)).length; const pr = g.items.length ? Math.round(100 * rd / g.items.length) : 0;
+    return `<div class="rz-area${RZ.group === g.id ? ' on' : ''}" data-g="${esc(g.id)}"><div class="rz-at"><i class="rz-dot" style="background:${esc(g.color)}"></i><b>${esc(g.name)}</b><span class="tag blue">${g.items.length}</span></div><div class="small muted">${rd} připraveno · ${g.items.length - rd} v procesu</div><div class="rz-pg"><i style="width:${pr}%"></i></div><div class="small muted rz-af"><span>${esc(Object.keys(g.cities).slice(0, 3).join(' · ') || 'Bez města')}</span><b>${rzCompact(g.items.reduce((t, o) => t + o.total, 0))}</b></div></div>`; }).join('') || '<div class="muted small" style="padding:8px">Zatím nejsou žádné oblasti.</div>';
+  $$('.rz-area').forEach(a => a.onclick = () => { RZ.group = a.dataset.g; RZ.status = 'ALL'; rzClearRoute(); rzRender(true); });
+  $('#rzTitle').textContent = (RZ.group === 'ALL' ? 'Všechny objednávky' : (RZ.orders.find(o => o.group === RZ.group) || {}).groupName || 'Oblast') + (RZ.status !== 'ALL' ? ' · ' + rzMeta(RZ.status).label : '');
+  $('#rzOrders').innerHTML = shown.map(o => { const m = rzMeta(o.status); const sel = !!rzPos(o.code);
+    return `<div class="rz-card${sel ? ' sel' : ''}" data-c="${esc(o.code)}" style="--c:${m.color}"><i class="rz-stripe"></i><input type="checkbox" class="rz-chk" ${sel ? 'checked' : ''} aria-label="Vybrat objednávku"><div class="rz-main"><div class="rz-code">${sel ? `<span class="rz-pos">${rzPos(o.code)}</span>` : ''}<b>${esc(o.code)}</b><span class="rz-badge" style="--c:${m.color};--t:${m.text}">${esc(m.label)}</span>${rzHasXY(o) ? '' : '<span class="tag">bez souřadnic</span>'}</div><div class="small muted rz-addr">${esc(o.address || 'Adresa neuvedena')}</div></div><div class="rz-r"><b>${esc(o.city || '—')}</b><div class="small">${rzMoney(o.total)}</div></div><span class="muted">›</span></div>`; }).join('') || '<div class="empty-big" style="padding:24px"><h3>Žádné objednávky</h3><p>Pro zvolený filtr tu nic není.</p></div>';
+  $$('.rz-card').forEach(c => { const o = RZ.orders.find(x => x.code === c.dataset.c); c.onclick = e => { if (e.target.classList.contains('rz-chk')) return; if (RZ.map && rzHasXY(o)) RZ.map.flyTo([o.lat, o.lng], Math.max(RZ.map.getZoom(), 13), { duration: .45 }); rzDetail(o); }; $('.rz-chk', c).onchange = e => rzToggle(o.code, e.target.checked); });
+  const n = RZ.seq.length; $('#rzSelN').textContent = n + ' vybráno'; const sv = shown.filter(o => rzPos(o.code)).length;
+  const sa = $('#rzSelAll'); sa.checked = shown.length > 0 && sv === shown.length; sa.indeterminate = sv > 0 && sv < shown.length;
+  $('#rzOpt').disabled = n < 2; $('#rzDraw').disabled = n === 0;
+  $('#rzSum').innerHTML = `<b>${shown.length}</b> zobrazeno · ${RZ.group === 'ALL' ? 'všechny oblasti' : esc((RZ.orders.find(o => o.group === RZ.group) || {}).groupName || '')}`;
+  rzMarkers(fit);
+}
+function rzToggle(code, on) { if (on) { if (!RZ.seq.includes(code)) RZ.seq.push(code); } else RZ.seq = RZ.seq.filter(c => c !== code); rzClearRoute(); rzRender(false); }
+function rzBulk(on) { for (const o of rzShown()) { if (on) { if (!RZ.seq.includes(o.code)) RZ.seq.push(o.code); } else RZ.seq = RZ.seq.filter(c => c !== o.code); } rzClearRoute(); rzRender(false); }
+const rzSelected = () => RZ.seq.map(c => RZ.orders.find(o => o.code === c)).filter(o => o && rzHasXY(o));
+function rzMsg(t) { const m = $('#rzMsg'); if (!m) return; m.hidden = !t; m.textContent = t || ''; }
+function rzValid(sel) { if (!sel.length) { toast('Nejdřív vyber alespoň jednu objednávku se souřadnicemi.', true); return false; } if (sel.length > RZ_MAX) { toast(`Pro jednu trasu lze vybrat nejvýše ${RZ_MAX} objednávek.`, true); return false; } return true; }
+function rzOptimize() {
+  const sel = rzSelected(); if (!rzValid(sel)) return;
+  const dist = list => { let t = 0, la = RZ_WH.lat, ln = RZ_WH.lng; for (const o of list) { t += rzKm(la, ln, o.lat, o.lng); la = o.lat; ln = o.lng; } return t; };
+  const rem = sel.slice(); let ord = []; let la = RZ_WH.lat, ln = RZ_WH.lng;
+  while (rem.length) { let bi = 0, bd = Infinity; rem.forEach((o, i) => { const d = rzKm(la, ln, o.lat, o.lng); if (d < bd) { bd = d; bi = i; } }); const nx = rem.splice(bi, 1)[0]; ord.push(nx); la = nx.lat; ln = nx.lng; }
+  if (ord.length >= 4) { let best = dist(ord), imp = true, loops = 0; while (imp && loops++ < 20) { imp = false; for (let i = 0; i < ord.length - 1; i++) for (let k = i + 1; k < ord.length; k++) { const c = [...ord.slice(0, i), ...ord.slice(i, k + 1).reverse(), ...ord.slice(k + 1)]; const d = dist(c); if (d + 0.01 < best) { ord = c; best = d; imp = true; } } } }
+  const rest = RZ.seq.filter(c => !ord.some(o => o.code === c)); RZ.seq = [...ord.map(o => o.code), ...rest];
+  rzClearRoute(); rzRender(false); rzMsg('Pořadí zastávek bylo optimalizováno od skladu. Klikni na „Vykreslit trasu“.'); toast('Pořadí zastávek optimalizováno ✓');
+}
+async function rzDraw() {
+  const sel = rzSelected(); if (!rzValid(sel)) return; rzMsg('Počítám trasu v Mapy.com…'); $('#rzDraw').disabled = true;
+  try {
+    const r = await rzCall({ action: 'route', stops: sel.map(o => ({ lat: o.lat, lng: o.lng })) });
+    if (!r.ok) { rzMsg(r.message || 'Trasu se nepodařilo vypočítat.'); return; }
+    RZ.route = { latlngs: r.latlngs, len: r.lengthMeters, dur: r.durationSeconds }; rzMsg('');
+    RZ.rt.clearLayers(); L.polyline(r.latlngs, { color: '#fff', weight: 12, opacity: .96, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(RZ.rt); const line = L.polyline(r.latlngs, { color: '#1267E8', weight: 7, opacity: .98, lineCap: 'round', lineJoin: 'round' }).addTo(RZ.rt);
+    sel.forEach((o, i) => { const m = rzMeta(o.status); L.marker([o.lat, o.lng], { zIndexOffset: 1000 + i, icon: L.divIcon({ className: '', html: `<div class="rz-mk rz-stop" style="--mc:${m.color};--mt:${m.text}">${i + 1}</div>`, iconSize: [48, 48], iconAnchor: [24, 45] }) }).bindTooltip(`${i + 1}. ${esc(o.code)} · ${esc(o.city || '')}`, { direction: 'top', offset: [0, -38] }).addTo(RZ.rt); });
+    RZ.map.fitBounds(line.getBounds(), { padding: [55, 55] });
+    $('#rzRs').textContent = sel.length; $('#rzRd').textContent = r.lengthMeters ? (r.lengthMeters >= 1000 ? (r.lengthMeters / 1000).toLocaleString('cs-CZ', { maximumFractionDigits: 1 }) + ' km' : Math.round(r.lengthMeters) + ' m') : '—';
+    const min = Math.round((r.durationSeconds || 0) / 60); $('#rzRt').textContent = r.durationSeconds ? (min >= 60 ? Math.floor(min / 60) + ' h ' + (min % 60) + ' min' : min + ' min') : '—'; $('#rzRv').textContent = rzCompact(sel.reduce((t, o) => t + o.total, 0)); $('#rzRoute').hidden = false;
+  } catch (e) { rzMsg(e.message); } finally { const b = $('#rzDraw'); if (b) b.disabled = RZ.seq.length === 0; }
+}
+function rzClearRoute() { RZ.route = null; if (RZ.rt) RZ.rt.clearLayers(); const r = $('#rzRoute'); if (r) r.hidden = true; rzMsg(''); }
+function rzUrl(sel, nav) {
+  const end = sel[sel.length - 1]; const p = ['mapset=traffic', 'start=' + encodeURIComponent(RZ_WH.lng + ',' + RZ_WH.lat), 'end=' + encodeURIComponent(end.lng + ',' + end.lat), 'routeType=car_fast_traffic'];
+  if (sel.length > 1) p.push('waypoints=' + encodeURIComponent(sel.slice(0, -1).map(o => o.lng + ',' + o.lat).join(';')));
+  if (nav) p.push('navigate=true'); return 'https://mapy.com/fnc/v1/route?' + p.join('&');
+}
+function rzOpenUrl(nav) { const sel = rzSelected(); if (!rzValid(sel)) return; window.open(rzUrl(sel, nav), '_blank', 'noopener'); }
+async function rzDetail(o) {
+  const m = rzMeta(o.status); const items = String(o.items || '').split('|').map(x => x.trim()).filter(Boolean); const inRoute = !!rzPos(o.code);
+  const done = modal({ title: o.code, body: `<span class="rz-badge" style="--c:${m.color};--t:${m.text}">${esc(m.label)}</span>
+    <label>Doručovací adresa</label><div>${esc(o.address || '—')}</div>
+    <div class="rz-tiles"><div class="panel panel-b"><b>${rzMoney(o.total)}</b><div class="small muted">Celková hodnota</div></div><div class="panel panel-b"><b>${rzMoney(o.paid)}</b><div class="small muted">Uhrazeno</div></div></div>
+    <label>Obsah objednávky</label><ul class="rz-items">${items.map(x => `<li>${esc(x)}</li>`).join('') || '<li>Obsah není v exportu uveden.</li>'}</ul>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><a class="btn sm" target="_blank" rel="noopener" href="https://mapy.com/cs/zakladni?q=${encodeURIComponent(o.address || '')}">Otevřít v Mapy.com</a><button class="btn sm" id="rzCopy" type="button">Kopírovat adresu</button></div>`,
+    actions: [{ label: 'Zavřít', value: null }, { label: inRoute ? 'Odebrat z trasy' : 'Přidat do trasy', cls: 'primary', value: 'toggle' }] });
+  setTimeout(() => { const b = $('#rzCopy'); if (b) b.onclick = () => navigator.clipboard.writeText(o.address || '').then(() => toast('Adresa zkopírována ✓'), () => toast('Kopírování se nepovedlo.', true)); }, 40);
+  if ((await done) === 'toggle') { if (!rzHasXY(o) && !inRoute) toast('Objednávka nemá souřadnice — v trase se nepoužije.', true); rzToggle(o.code, !inRoute); }
+}
+async function rzSync() {
+  if (RZ.sync) return; RZ.sync = true; const set = t => { const b = $('#rzSync'); if (b) { b.disabled = true; b.innerHTML = `<span class="spin"></span> ${t}`; } };
+  let msg = '', warn = false;
+  try {
+    let r, guard = 0; do { set(guard ? 'Doplňuji souřadnice…' : 'Stahuji objednávky…'); r = await rzCall({ action: 'sync' }); if (r.ok === false) throw new Error(r.error); } while (r.geoRemaining > 0 && !r.noKey && ++guard < 12);
+    msg = `Načteno ${r.orders} objednávek`; if (r.missing) { warn = true; msg += ` · ${r.missing} bez souřadnic (adresu se nepodařilo najít)`; } if (r.noKey) { warn = true; msg += ' · chybí klíč Mapy.com'; }
+    await rzLoad();
+  } catch (e) { warn = true; msg = e.message; }
+  RZ.sync = false; drawRozvozy(); toast(msg, warn);
+}
+async function rzConfig() {
+  const c = RZ.cfg || {};
+  const v = await modal({ title: 'Propojení rozvozů', body: `<p class="muted small">Hodnoty najdeš ve starém Apps Scriptu: Nastavení projektu → Vlastnosti skriptu. Prázdné pole se nezmění; uložené hodnoty se nezobrazují.</p>
+    <label>Odkaz na CSV export objednávek ze Shoptetu <span class="muted small">(<code>SHOPTET_EXPORT_URL</code>) ${c.hasCsv ? '· uloženo ✓' : ''}</span></label><input data-k="csv" placeholder="https://…" autocomplete="off">
+    <label>Klíč Mapy.com pro mapu <span class="muted small">(<code>MAPY_TILE_API_KEY</code>) ${c.tileKey ? '· uloženo ✓' : ''}</span></label><input data-k="tile" autocomplete="off">
+    <label>Klíč Mapy.com pro trasy a adresy <span class="muted small">(<code>MAPY_API_KEY_SERVER</code>) ${c.hasRoute ? '· uloženo ✓' : ''}</span></label><input data-k="route" autocomplete="off">`, focus: '[data-k="csv"]',
+    actions: [{ label: 'Zrušit', value: null }, { label: 'Uložit', cls: 'primary', value: bd => ({ csvUrl: $('[data-k="csv"]', bd).value.trim(), tileKey: $('[data-k="tile"]', bd).value.trim(), routeKey: $('[data-k="route"]', bd).value.trim() }) }] });
+  if (!v) return;
+  try { await rzCall({ action: 'config_save', ...v }); await rzLoad(); drawRozvozy(); toast('Propojení uloženo ✓'); } catch (e) { toast(e.message, true); }
 }
 const INV_KIND = { partial: 'Dílčí inventura', annual: 'Roční inventura' };
 const INV_CHECK = ['Naskladnit všechny příjemky a svozy, které dorazily', 'Zpracovat kontejnery, které už dorazily na sklad', 'Domluvit pauzu v příjmu a expedici na dobu počítání', 'Vyřadit poškozené a rozbalené zboží, ať je to zvlášť', 'Rozdělit sklad na zóny / regály a určit počítací dvojice', 'Načíst aktuální stav skladu ze Shoptetu a vyexportovat ho (záloha)', 'Vytisknout počítací soupisy', 'Určit termín a informovat tým'];
