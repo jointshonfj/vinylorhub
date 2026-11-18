@@ -1593,3 +1593,46 @@ table.list th { font-weight: 500; text-transform: none; letter-spacing: 0; font-
 @media print { body > *:not(#invPrintArea) { display: none !important; } #invPrintArea { display: block !important; padding: 0; color: #000; background: #fff; font-family: Arial, sans-serif; }
   #invPrintArea table { width: 100%; border-collapse: collapse; font-size: 11pt; } #invPrintArea th, #invPrintArea td { border: 1px solid #555; padding: 5px 7px; text-align: left; height: 22px; } #invPrintArea thead { display: table-header-group; } #invPrintArea tr { page-break-inside: avoid; } }
 @media (max-width: 820px) { .inv-two { grid-template-columns: 1fr; } .inv-t input.inv-q { width: 100%; } .inv-t input.inv-loc, .inv-t input.inv-n { width: 100%; } .inv-steps .inv-step span { display: none; } .inv-steps .inv-step.on span { display: inline; } .inv-scan { align-items: stretch; } .inv-scan label.grow { width: 100%; } }
+
+
+/* ===== v0.32 — jednotný vzhled všech obrazovek ===== */
+.pg-search { max-width: 340px; min-width: 200px; flex: 1 1 220px; }
+.topbar h1 { font-size: 26px; font-weight: 800; letter-spacing: -.03em; }
+
+/* tlačítka: hlavní akce je vždy tmavě modrá jako v Nabídkách */
+.btn.primary { background: var(--nav-on); border-color: var(--nav-on); color: var(--nav-on-ink); box-shadow: 0 2px 8px color-mix(in srgb, var(--nav-on) 22%, transparent); filter: none; }
+.btn.primary:hover { filter: none; background: color-mix(in srgb, var(--nav-on) 88%, var(--brand)); box-shadow: 0 6px 16px color-mix(in srgb, var(--nav-on) 28%, transparent); }
+.btn { border-radius: 11px; }
+
+/* pole, okna, štítky */
+input, select, textarea { border-radius: 11px; }
+.modal { border-radius: 20px; }
+.tag, .cnt, .bl-count { font-family: inherit; font-variant-numeric: tabular-nums; border-radius: 999px; }
+.card .no, .col-h .sum, .legend, .it-head, .si-head, .results .grp, .nav-h { font-family: inherit; }
+
+/* filtry jako kulaté pilulky, aktivní tmavě modrá */
+.chip { border-radius: 999px; }
+.chip.on { background: var(--nav-on); color: var(--nav-on-ink); border-color: var(--nav-on); }
+.chip.on .tag, .chip.on .muted { background: color-mix(in srgb, var(--nav-on-ink) 22%, transparent); color: var(--nav-on-ink); }
+
+/* statistiky (Naskladnění, Návštěvnost…) ve stejném stylu jako karty v Přehledu */
+.stat { border-radius: 16px; padding: 16px 18px; }
+.stat::after { display: none; }
+.stat .k { font-family: inherit; text-transform: none; letter-spacing: 0; font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.stat .v { font-family: inherit; font-size: 28px; font-weight: 800; letter-spacing: -.03em; }
+.stat .s { font-size: 12.5px; }
+.stat.click { cursor: pointer; transition: transform .2s var(--back), box-shadow .2s; } .stat.click:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+.stat.on { box-shadow: 0 0 0 2px var(--nav-on); }
+
+/* panely a tabulky */
+.panel { border-radius: 16px; }
+.panel-h { font-size: 15.5px; padding: 15px 18px; }
+table.list th { background: transparent; border-bottom: 1px solid var(--line); padding: 11px 14px; }
+table.list td { padding: 12px 14px; border-top: 1px solid var(--line); }
+table.list tr.click:hover td { background: var(--hover); }
+.btile { border-radius: 16px; }
+.col, .bl-list { border-radius: 16px; }
+.login .panel { border-radius: 22px; }
+
+/* menu: patička s verzí jako karta */
+.side .me { border-top: 0; margin: auto 0 0; padding: 12px; background: var(--surface-2); border-radius: 14px; }

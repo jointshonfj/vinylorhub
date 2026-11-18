@@ -344,6 +344,7 @@ const NAV_SVG = {
   cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
 };
 const svgIco = k => `<svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_SVG[k] || ''}</svg>`;
+const pgHead = (key, title, sub = '', right = '') => `<div class="pg-head"><span class="pg-ico">${svgIco(key)}</span><div class="grow"><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div>${right}</div>`;
 const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', inv: 'Inventura', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
 function shell(active, inner) {
   const nav = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ico">${svgIco(key)}</span><span>${label}</span></a>`;
@@ -1800,7 +1801,7 @@ async function renderSettings() {
   const s = row.data, sup = s.supplier || {};
   const inp = (k, label, v, cls = '', type = 'text', extra = '') => `<div class="${cls}"><label>${label}</label><input name="${k}" type="${type}" value="${esc(v)}" ${extra}></div>`;
   $('#main').innerHTML = `
-  <div class="topbar"><h1>Nastavení</h1></div>
+  ${pgHead('settings', 'Nastavení', 'Propojení se Shoptetem, kurzy, objednávky a správa týmu.')}
   <form class="stack" id="sf">
     <section class="panel"><div class="panel-h">🛒 Produkty ze Shoptetu</div><div class="panel-b">
       <div class="form">
@@ -1980,7 +1981,7 @@ async function renderAccount() {
   let factors = [];
   try { const { data } = await sb.auth.mfa.listFactors(); factors = (data?.totp || []).filter(f => f.status === 'verified'); } catch {}
   shell('account', `
-  <div class="topbar"><h1>Můj účet</h1></div>
+  ${pgHead('account', 'Můj účet', 'Heslo, dvoufázové ověření a přihlášená zařízení.')}
   <div class="stack" style="max-width:760px">
     ${me.must_change ? '<div class="panel panel-b notice">👋 Vítej! Nejdřív si prosím nastav vlastní heslo — dočasné heslo od správce už dál nepoužívej.</div>' : ''}
     <form class="panel" id="pw" autocomplete="on"><div class="panel-h">🔑 Změna hesla</div><div class="panel-b form">
@@ -2203,11 +2204,7 @@ async function renderStock() {
   try { await Promise.all([loadReceipts(), loadSettings()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
   const main = $('#main');
   main.innerHTML = `
-  <div class="topbar">
-    <h1>Naskladnění</h1>
-    <button class="btn primary" id="newRc">＋ Nová příjemka</button>
-    <div class="search grow" style="max-width:380px"><span class="ic">⌕</span><input id="rq" placeholder="Hledat doklad, dodavatele, kód produktu…" value="${esc(SK.q)}"></div>
-  </div>
+  ${pgHead('stock', 'Naskladnění', 'Příjemky zboží, ceny a odeslání stavu do Shoptetu.', `<div class="search pg-search"><span class="ic">⌕</span><input id="rq" placeholder="Hledat doklad, dodavatele, kód…" value="${esc(SK.q)}"></div><button class="btn primary of-new" id="newRc">＋ Nová příjemka</button>`)}
   ${stockTabs('rc')}
   <div id="skStats"></div>
   <div class="chips" style="margin-bottom:12px" id="rcf">
@@ -3252,8 +3249,7 @@ const mvLink = r => ({ receipt: '#/s/' + r.ref_id, svoz: '#/svoz/' + r.ref_id, c
 async function renderMoves() {
   shell('moves', `<div class="topbar"><h1>Historie pohybů</h1></div><div class="panel panel-b"><div class="sk" style="height:220px"></div></div>`);
   try { await Promise.all([loadSettings(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
-  $('#main').innerHTML = `<div class="topbar"><h1>Historie pohybů</h1></div>
-  <p class="muted small" style="margin:-4px 0 12px">Každý pohyb zásob, který aplikace poslala do Shoptetu: z jaké příjemky, objednávky dodavateli, kontejneru nebo nabídky, kdo to udělal a kdy.</p>
+  $('#main').innerHTML = `${pgHead('moves', 'Historie pohybů', 'Každý pohyb zásob, který aplikace poslala do Shoptetu: z jaké příjemky, objednávky, kontejneru, nabídky nebo inventury, kdo to udělal a kdy.')}
   <div class="topbar" style="gap:8px"><div class="search grow" style="max-width:420px"><span class="ic">⌕</span><input id="mvq" placeholder="Hledat kód zboží, číslo dokladu, kontejner…" value="${esc(MV.q)}"></div>
     <select id="mvwho" class="of-who"><option value="">Všichni uživatelé</option>${S.users.map(u => `<option value="${u.id}" ${MV.who === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
     <input type="date" id="mvfrom" value="${MV.from}" title="Od"><input type="date" id="mvto" value="${MV.to}" title="Do"><button class="btn sm" id="mvcsv">⬇ CSV</button></div>
@@ -3841,7 +3837,7 @@ async function renderCt() {
   CT.animated = false;
   shell('ct', `<div class="topbar"><h1>Kontejnery</h1></div><div class="panel panel-b"><div class="sk" style="height:220px"></div></div>`);
   try { await Promise.all([loadCt(), loadProducts()]); } catch (e) { $('#main').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
-  $('#main').innerHTML = `<div class="topbar"><h1>Kontejnery</h1><div class="search grow" style="max-width:520px"><span class="ic">⌕</span><input id="ctq" placeholder="Hledat kontejner, B/L, číslo faktury, dodavatele — nebo produkt: „Carrara click 6mm“…" value="${esc(CT.q)}"></div><button class="btn primary" id="ctNew">＋ Nový kontejner</button></div>
+  $('#main').innerHTML = `${pgHead('ct', 'Kontejnery', 'Sledování plavby, faktury a naskladnění z kontejnerů.', `<div class="search pg-search"><span class="ic">⌕</span><input id="ctq" placeholder="Hledat kontejner, B/L, fakturu, produkt…" value="${esc(CT.q)}"></div><button class="btn primary of-new" id="ctNew">＋ Nový kontejner</button>`)}
   <div class="ct-beta"><span>🧪 Testovací verze</span> Kontejnery zatím zkoušíme. Údaje a sledování se ještě ladí, proto s nimi zacházej opatrně a chyby hlas Filipovi.</div><div id="ctHero"></div><div id="ctStats"></div><div class="chips" id="ctF" style="margin-bottom:12px"></div><div id="ctRes"></div><div id="ctList"></div>`;
   $('#ctNew').onclick = async e => { const b = e.currentTarget; b.disabled = true; try { const r = check(await sb.from('ct_containers').insert({ created_by: S.me.id }).select('id').single()); CT.fresh = r.id; location.hash = '#/k/' + r.id; } catch (er) { toast(er.message, true); b.disabled = false; } };
   $('#ctq').oninput = e => { CT.q = e.target.value; drawCt(); };
@@ -4346,8 +4342,8 @@ async function renderVisits() {
   if (!S.offers.length) refreshOffers(true).catch(() => {});
   const main = $('#main');
   main.innerHTML = `
+  ${pgHead('visits', 'Návštěvnost', 'Počítání návštěv a nákupů v prodejně.')}
   <div class="topbar">
-    <h1>Návštěvnost</h1>
     <div class="chips" id="vsPeriod">
       ${[['month', 'Tento měsíc'], ['prev', 'Minulý měsíc'], ['30', '30 dní'], ['year', 'Letos'], ['all', 'Vše'], ['custom', 'Vlastní…']].map(([k, l]) => `<button class="chip ${VS.period === k ? 'on' : ''}" data-p="${k}">${l}</button>`).join('')}
     </div>
@@ -4580,7 +4576,7 @@ async function renderBoards() {
   const counts = boards.length ? check(await sb.from('board_cards').select('board_id').eq('archived', false).in('board_id', boards.map(b => b.id))) : [];
   const main = $('#main');
   main.innerHTML = `
-  <div class="topbar"><h1>Nástěnka</h1><span class="muted">sdílené úkoly a projekty týmu</span></div>
+  ${pgHead('boards', 'Nástěnka', 'Sdílené úkoly a projekty týmu.')}
   <div class="board-tiles">
     ${boards.map((b, i) => `<a class="btile" href="#/b/${b.id}" style="--bc:${esc(b.color)};--i:${i}"><b>${esc(b.name)}</b><span>${counts.filter(c => c.board_id === b.id).length} karet</span></a>`).join('')}
     <button class="btile new" id="newBoard"><b>＋ Nová nástěnka</b><span>např. Prodejna, Marketing, Sklad…</span></button>
