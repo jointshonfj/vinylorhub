@@ -853,7 +853,7 @@ async function zsHomeCard() {
 // data: CSV export objednávek ze Shoptetu → edge funkce hub-rozvoz → tabulka rozvoz_orders
 // =====================================================================
 const RZ_ST = [['Nevyřízená', 'NEVYŘÍZENÁ', '#FF1F2D', '#fff'], ['Zaplaceno', 'ZAPLACENO', '#00C853', '#fff'], ['Vyřizuje se', 'VYŘIZUJE SE', '#FF6D00', '#fff'], ['SKLAD', 'SKLAD', '#8E24AA', '#fff'],
-  ['Zabaleno - připraveno k expedici', 'ZABALENO', '#1565FF', '#fff'], ['Čeká na vyzvednutí přepravcem', 'ČEKÁ NA VYZVEDNUTÍ', '#00A6D6', '#fff'], ['Nedoplatek dopravy', 'NEDOPLATEK DOPRAVY', '#E91E63', '#fff'], ['Naše doprava', 'NAŠE DOPRAVA', '#FFD600', '#171717']];
+  ['Zabaleno - připraveno k expedici', 'ZABALENO', '#1565FF', '#fff'], ['Čeká na vyzvednutí přepravcem', 'ČEKÁ NA VYZVEDNUTÍ', '#00A6D6', '#fff'], ['Nedoplatek dopravy', 'NEDOPLATEK DOPRAVY', '#E91E63', '#fff'], ['Naše doprava', 'NAŠE DOPRAVA', '#FFD600', '#171717'], ['Poslání platebních údajů', 'PLATEBNÍ ÚDAJE', '#6D4C41', '#fff']];
 const RZ_READY = ['SKLAD', 'Zabaleno - připraveno k expedici', 'Čeká na vyzvednutí přepravcem', 'Nedoplatek dopravy', 'Naše doprava'];
 const RZ_WH = { name: 'Sklad Vinylor', address: 'V Lukách 293, Příbram', lat: 49.6992203, lng: 14.0045589 };
 const RZ_COLORS = ['#08752f', '#2f80c9', '#e4a32b', '#a36ad2', '#08a1a7', '#df6a55', '#6f8e36'];

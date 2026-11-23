@@ -15,7 +15,7 @@ const CORS = {
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const WAREHOUSE = { lat: 49.6992203, lng: 14.0045589 };
-const ALLOWED = ['Nevyřízená', 'Zaplaceno', 'Vyřizuje se', 'SKLAD', 'Zabaleno - připraveno k expedici', 'Čeká na vyzvednutí přepravcem', 'Nedoplatek dopravy', 'Naše doprava'];
+const ALLOWED = ['Nevyřízená', 'Zaplaceno', 'Vyřizuje se', 'SKLAD', 'Zabaleno - připraveno k expedici', 'Čeká na vyzvednutí přepravcem', 'Nedoplatek dopravy', 'Naše doprava', 'Poslání platebních údajů'];
 const ALIASES: Record<string, string> = Object.fromEntries([...ALLOWED.map(s => [s.toLowerCase(), s]), ['zabaleno – připraveno k expedici', 'Zabaleno - připraveno k expedici']]);
 const GEO_PER_CALL = 40;
 
