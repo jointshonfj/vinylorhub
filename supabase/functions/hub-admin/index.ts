@@ -1,7 +1,8 @@
 // Vinylor Hub · Edge Function „hub-admin“ — správa uživatelů
 // Smí ji použít jen správce, který je přihlášený s dokončeným 2FA (AAL2).
 //   { action: 'list' }                         → uživatelé + stav 2FA + poslední přihlášení
-//   { action: 'create', name, email, role? }   → nový účet + dočasné heslo
+//   { action: 'create', name, email, role?, apps? } → nový účet + dočasné heslo
+//   { action: 'set_access', id, apps, role }   → přístupy do aplikací a role (správce / uživatel)
 //   { action: 'reset', id }                    → nové dočasné heslo + odhlášení ze všech zařízení
 //   { action: 'reset_mfa', id }                → zrušení 2FA (ztracený telefon) + odhlášení
 //   { action: 'signout', id }                  → odhlášení ze všech zařízení
@@ -18,6 +19,8 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 function claims(jwt: string): Record<string, unknown> {
   try { return JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } catch { return {}; }
 }
+const APP_KEYS = ['nabidky', 'objednavky', 'sklad', 'inventura', 'zasoby', 'rozvozy', 'navstevy', 'nastenka', 'kontejnery', 'pohyby'];
+const cleanApps = (v: unknown) => Array.isArray(v) ? APP_KEYS.filter(k => v.includes(k)) : [];
 function tempPassword() {
   // 18 znaků, bez zaměnitelných znaků; vždy písmena, číslice i symbol
   const abc = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -58,10 +61,19 @@ Deno.serve(async (req) => {
       const { data, error } = await sb.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name }, app_metadata: { hub_invited: true } });
       await sb.from('hub_invites').delete().eq('email', email);
       if (error) return json({ error: /already|registered|exists/i.test(error.message) ? 'Uživatel s tímto e-mailem už existuje.' : error.message }, 400);
-      const { error: e2 } = await sb.from('hub_profiles').insert({ id: data.user.id, name, email, role: b.role === 'admin' ? 'admin' : 'user', must_change: true });
+      const { error: e2 } = await sb.from('hub_profiles').insert({ id: data.user.id, name, email, role: b.role === 'admin' ? 'admin' : 'user', apps: cleanApps(b.apps), must_change: true });
       if (e2) { await sb.auth.admin.deleteUser(data.user.id); return json({ error: e2.message }, 400); }
-      await audit('user_created', data.user.id, { email });
+      await audit('user_created', data.user.id, { email, role: b.role === 'admin' ? 'admin' : 'user', apps: cleanApps(b.apps) });
       return json({ ok: true, password });
+    }
+    if (b.action === 'set_access') {
+      const role = b.role === 'admin' ? 'admin' : 'user', apps = cleanApps(b.apps);
+      if (id === u.user.id && role !== 'admin') return json({ error: 'Sám sobě správce odebrat nejde.' }, 400);
+      const { data: before } = await sb.from('hub_profiles').select('role, apps').eq('id', id).single();
+      const { error } = await sb.from('hub_profiles').update({ role, apps }).eq('id', id);
+      if (error) return json({ error: error.message }, 400);
+      await audit('access_changed', id, { role, apps, before });
+      return json({ ok: true });
     }
     if (b.action === 'reset') {
       const password = tempPassword();

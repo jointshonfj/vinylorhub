@@ -188,8 +188,8 @@ Deno.serve(async (req) => {
     const { data: u } = await sb.auth.getUser(jwt);
     if (!u?.user) return json({ error: 'Nepřihlášen' }, 401);
     if (claims(jwt).aal !== 'aal2') return json({ error: 'Vyžaduje dvoufázové ověření.' }, 403);
-    const { data: me } = await sb.from('hub_profiles').select('active, apps').eq('id', u.user.id).single();
-    if (!me || !me.active || !(me.apps || []).includes('kontejnery')) return json({ error: 'Nemáš přístup k aplikaci Kontejnery.' }, 403);
+    const { data: me } = await sb.from('hub_profiles').select('role, active, apps').eq('id', u.user.id).single();
+    if (!me || !me.active || (me.role !== 'admin' && !(me.apps || []).includes('kontejnery'))) return json({ error: 'Nemáš přístup k aplikaci Kontejnery.' }, 403);
     const token = Deno.env.get('SHOPTET_API_TOKEN');
     if (!token) return json({ error: 'V Supabase Secrets chybí SHOPTET_API_TOKEN.' }, 503);
     const hdr = { 'Shoptet-Private-API-Token': token, 'Content-Type': 'application/json', 'Accept': 'application/json' };

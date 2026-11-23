@@ -272,6 +272,41 @@ async function aresSearch(q) {
   return ((await r.json()).ekonomickeSubjekty || []).map(aresMap);
 }
 
+// ---------- aplikace a přístupy ----------
+// správce (role admin) má přístup všude; ostatním zapíná jednotlivé části správce (hub_profiles.apps); stejně to hlídá i databáze (RLS)
+const APPS = [
+  { k: 'nabidky', n: 'Nabídky', nav: 'offers', href: '#/nabidky' },
+  { k: 'objednavky', n: 'Objednávky', nav: 'orders', href: '#/objednavky' },
+  { k: 'sklad', n: 'Naskladnění', nav: 'stock', href: '#/sklad' },
+  { k: 'inventura', n: 'Inventura', nav: 'inv', href: '#/inventura' },
+  { k: 'zasoby', n: 'Zásoby', nav: 'zs', href: '#/zasoby' },
+  { k: 'rozvozy', n: 'Rozvozy', nav: 'rz', href: '#/rozvozy' },
+  { k: 'navstevy', n: 'Návštěvnost', nav: 'visits', href: '#/navstevy' },
+  { k: 'nastenka', n: 'Nástěnka', nav: 'boards', href: '#/nastenka' },
+  { k: 'kontejnery', n: 'Kontejnery', nav: 'ct', href: '#/kontejnery' },
+  { k: 'pohyby', n: 'Historie pohybů', nav: 'moves', href: '#/pohyby' },
+];
+const APP_OF_NAV = Object.fromEntries(APPS.map(a => [a.nav, a.k]));
+const hasApp = a => !!(S.me && (S.me.role === 'admin' || (Array.isArray(S.me.apps) && S.me.apps.includes(a))));
+const routeApp = h => /^#\/(o\/|nabidky)/.test(h) ? 'nabidky' : /^#\/(s\/|sklad)/.test(h) ? 'sklad' : h === '#/pohyby' ? 'pohyby' : h === '#/zasoby' ? 'zasoby' : h === '#/rozvozy' ? 'rozvozy'
+  : /^#\/inventura/.test(h) ? 'inventura' : /^#\/(svozy|objednavky|svoz\/|oj\/)/.test(h) ? 'objednavky' : /^#\/(kontejnery|k\/)/.test(h) ? 'kontejnery' : h === '#/navstevy' ? 'navstevy' : /^#\/(nastenka|b\/)/.test(h) ? 'nastenka' : null;
+// do deníku činnosti se zapisuje, kterou část uživatel otevřel (max. jednou za 20 minut) a kam zkusil vstoupit bez přístupu
+const trackSeen = {};
+function track(kind, app) {
+  if (!app || !S.me) return; const key = kind + app, t = Date.now();
+  if (trackSeen[key] && t - trackSeen[key] < (kind === 'view' ? 20 : 5) * 60000) return; trackSeen[key] = t;
+  try { sb.rpc('hub_track', { p_kind: kind, p_app: app, p_detail: {} }).then(() => {}, () => {}); } catch {}
+}
+function lockedPage(app) {
+  const a = APPS.find(x => x.k === app); const label = a ? a.n : 'Správa uživatelů';
+  const admins = S.users.filter(u => u.role === 'admin' && u.active);
+  track('denied', app);
+  shell(a ? a.nav : 'settings', `<div class="panel empty-big lockbox"><div class="ill">🔒</div><h3>Do části „${esc(label)}“ nemáš přístup</h3>
+    <p>Tuhle část má pro tvůj účet správce vypnutou. Pokud ji potřebuješ, kontaktuj správce${admins.length ? ':' : '.'}</p>
+    ${admins.length ? `<p class="lock-adm">${admins.map(u => `<b>${esc(u.name)}</b>${u.email ? ` · <a href="mailto:${esc(u.email)}">${esc(u.email)}</a>` : ''}${u.phone ? ` · ${esc(u.phone)}` : ''}`).join('<br>')}</p>` : ''}
+    <a class="btn primary" href="#/">Zpět na přehled</a></div>`);
+}
+
 // ---------- router ----------
 // uživatel musí do ~0,4 s vidět, že se něco děje: tenký pruh nahoře (objeví se až po 150 ms, ať neprobliká); po návratu z detailu se vrátí poloha seznamu
 const scrollMem = {}; let prevHash = '';
@@ -306,6 +341,15 @@ async function routeInner() {
   if (S.me.must_change && h !== '#/ucet') { location.hash = '#/ucet'; return; }
   if (routeCleanup) { const c = routeCleanup; routeCleanup = null; c(); }
   document.querySelectorAll('.menu, .sumbar').forEach(m => m.remove());
+  // změny přístupů od správce se projeví do minuty bez nového přihlášení
+  if (Date.now() - (S.meAt || 0) > 60000) {
+    S.meAt = Date.now();
+    try { const keep = S.me.id; await loadUsers(); if (!S.users.some(u => u.id === keep)) return logout('Tvůj účet už nemá do Vinylor Hubu přístup.'); } catch {}
+  }
+  const need = routeApp(h);
+  if (need && !hasApp(need)) return lockedPage(need);
+  if (need) track('view', need);
+  if (h === '#/uzivatele') { if (S.me.role !== 'admin') return lockedPage('uzivatele'); track('view', 'uzivatele'); return renderUsers(); }
   let m;
   if ((m = h.match(/^#\/o\/([\w-]+)/))) return renderEditor(m[1]);
   if ((m = h.match(/^#\/s\/([\w-]+)/))) return renderReceipt(m[1]);
@@ -355,15 +399,17 @@ const NAV_SVG = {
   ct: '<path d="M3 14h18l-2 5H5zM6 14V9h12v5M9 9V6h6v3"/>',
   moves: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.9 1.9M16.6 16.6l1.9 1.9M18.5 5.5l-1.9 1.9M7.4 16.6l-1.9 1.9"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M17 5.5v5M14.5 8h5"/>',
   account: '<circle cx="12" cy="8.5" r="3.6"/><path d="M4.5 20.5c0-4 3.4-6.5 7.5-6.5s7.5 2.5 7.5 6.5"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
   cal: '<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
 };
 const svgIco = k => `<svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_SVG[k] || ''}</svg>`;
 const pgHead = (key, title, sub = '', right = '') => `<div class="pg-head"><span class="pg-ico">${svgIco(key)}</span><div class="grow"><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div>${right}</div>`;
-const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', inv: 'Inventura', zs: 'Zásoby', rz: 'Rozvozy', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', account: 'Můj účet' };
+const HB_TITLES = { home: 'Přehled', offers: 'Nabídky', orders: 'Objednávky & Sklad', stock: 'Objednávky & Sklad', inv: 'Inventura', zs: 'Zásoby', rz: 'Rozvozy', moves: 'Objednávky & Sklad', ct: 'Kontejnery', visits: 'Návštěvnost', boards: 'Nástěnka', settings: 'Nastavení', users: 'Správa uživatelů', account: 'Můj účet' };
 function shell(active, inner) {
   const nav = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ico">${svgIco(key)}</span><span>${label}</span></a>`;
+  const navA = (href, key, label, app) => hasApp(app) ? nav(href, key, '', label) : `<a href="${href}" class="locked ${active === key ? 'on' : ''}" title="Nemáš přístup — kontaktuj správce"><span class="ico">${svgIco(key)}</span><span>${label}</span><em aria-label="zamčeno">🔒</em></a>`;
   if (!$('.shell')) {
     $('#app').innerHTML = `
     <div class="mobile-top"><button id="menuBtn" aria-label="Menu">☰</button><b>Vinylor Hub</b></div>
@@ -391,25 +437,17 @@ function shell(active, inner) {
     $('#scrim').onclick = () => setSide(false);
   }
   $('#hbTitle').textContent = HB_TITLES[active] || 'Vinylor Hub';
-  const tab = (href, key, icon, label) => `<a href="${href}" class="${active === key ? 'on' : ''}"><span class="ti">${icon}</span><span>${label}</span></a>`;
-  $('#tabbar').innerHTML = `${tab('#/', 'home', '🏠', 'Přehled')}${tab('#/nabidky', 'offers', '📄', 'Nabídky')}${tab('#/objednavky', 'orders', '🚚', 'Objednávky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account', 'ct', 'moves', 'boards', 'inv'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
+  const tab = (href, key, icon, label) => { const lk = APP_OF_NAV[key] && !hasApp(APP_OF_NAV[key]); return `<a href="${href}" class="${active === key ? 'on' : ''}${lk ? ' locked' : ''}"><span class="ti">${lk ? '🔒' : icon}</span><span>${label}</span></a>`; };
+  $('#tabbar').innerHTML = `${tab('#/', 'home', '🏠', 'Přehled')}${tab('#/nabidky', 'offers', '📄', 'Nabídky')}${tab('#/objednavky', 'orders', '🚚', 'Objednávky')}${tab('#/sklad', 'stock', '📦', 'Sklad')}<button type="button" id="tbMenu" class="${['visits', 'settings', 'account', 'ct', 'moves', 'boards', 'inv', 'users'].includes(active) ? 'on' : ''}"><span class="ti">☰</span><span>Víc</span></button>`;
   $('#tbMenu').onclick = () => setSide(true);
   $('#side').innerHTML = `
     <a class="brand" href="#/"><img src="img/icon.png" alt=""><span>Vinylor Hub<small>automatizace</small></span></a>
     <nav class="nav">
       ${nav('#/', 'home', '🏠', 'Přehled')}
-      ${nav('#/nabidky', 'offers', '📄', 'Nabídky')}
-      ${nav('#/objednavky', 'orders', '🚚', 'Objednávky')}
-      ${nav('#/sklad', 'stock', '📦', 'Naskladnění')}
-      ${nav('#/inventura', 'inv', '📋', 'Inventura')}
-      ${nav('#/zasoby', 'zs', '📈', 'Zásoby')}
-      ${nav('#/rozvozy', 'rz', '📍', 'Rozvozy')}
-      ${nav('#/navstevy', 'visits', '🚶', 'Návštěvnost')}
-      ${nav('#/nastenka', 'boards', '🗂️', 'Nástěnka')}
-      ${hasApp('kontejnery') ? nav('#/kontejnery', 'ct', '🚢', 'Kontejnery') : '<a class="soon" href="#" title="Zatím jen pro vybrané uživatele"><span class="ico">🚢</span><span>Kontejnery</span><em>🔒</em></a>'}
-      ${nav('#/pohyby', 'moves', '📜', 'Historie pohybů')}
+      ${['offers', 'orders', 'stock', 'inv', 'zs', 'rz', 'visits', 'boards', 'ct', 'moves'].map(k => { const a = APPS.find(x => x.nav === k); return navA(a.href, k, a.n, a.k); }).join('')}
       <div class="nav-h">Systém</div>
       ${nav('#/nastaveni', 'settings', '⚙️', 'Nastavení')}
+      ${S.me.role === 'admin' ? nav('#/uzivatele', 'users', '👥', 'Správa uživatelů') : ''}
       ${nav('#/ucet', 'account', '👤', 'Můj účet')}
     </nav>
     <div class="me"><div class="who"><span class="av lg">${initials(S.me.id)}</span><div><b>${esc(S.me.name)}</b><a href="#/ucet">Účet</a><a href="#" id="logout">Odhlásit</a></div></div>${themeToggle()}${CREDIT}</div>`;
@@ -565,7 +603,7 @@ function weekSeries(list, valFn) {
 }
 async function renderHome() {
   shell('home', `<div class="pg-hello"><h1>${hello()} 👋</h1><p>Tady je přehled toho, co se dnes děje.</p></div><div class="kpis k4">${'<div class="panel kpi"><div class="sk" style="height:50px;width:100%"></div></div>'.repeat(4)}</div>`);
-  const rs = await Promise.allSettled([refreshOffers(true), loadSettings(), loadOj(), loadProducts()]);
+  const rs = await Promise.allSettled([hasApp('nabidky') ? refreshOffers(true) : Promise.resolve((S.offers = [])), loadSettings(), hasApp('objednavky') ? loadOj() : Promise.reject(new Error('bez přístupu')), loadProducts()]);
   if (rs[0].status === 'rejected') { $('#main').innerHTML = `<p class="err">${esc(rs[0].reason.message)}</p>`; return; }
   const okOj = rs[2].status === 'fulfilled' && rs[3].status === 'fulfilled';
   const base = S.offers.filter(o => !o.archived);
@@ -584,7 +622,7 @@ async function renderHome() {
   const bySup = list => { const m = {}; list.forEach(a => { const n = (ojSup(a.supplier_id) || {}).name || '?'; m[n] = (m[n] || 0) + 1; }); return Object.entries(m).map(([k, v]) => `${esc(k)} (${v})`).join(' · '); };
   const word = (n, a, b, c) => n === 1 ? a : n < 5 ? b : c;
   const KI = { doc: NAV_SVG.offers, truck: NAV_SVG.orders, ship: NAV_SVG.ct, box: NAV_SVG.stock };
-  const kpi = [['doc', 'var(--s-sent)', 'Rozjednané nabídky', open.length, lateO.length ? `<span class="kpi-pill warn">ozvat se: ${lateO.length}</span>` : '', () => { location.hash = '#/nabidky'; }]];
+  const kpi = !hasApp('nabidky') ? [] : [['doc', 'var(--s-sent)', 'Rozjednané nabídky', open.length, lateO.length ? `<span class="kpi-pill warn">ozvat se: ${lateO.length}</span>` : '', () => { location.hash = '#/nabidky'; }]];
   if (okOj) kpi.push(['truck', 'var(--s-sent)', 'K objednání', toOrder.length, '', () => ojGoHash('potreba', { card: 'order', view: 'list' })], ['ship', 'var(--brand)', 'Na cestě', onWay.length, '', () => ojGoHash('aufy', { af: 'confirmed' })], ['box', 'var(--s-confirmed)', 'K naskladnění', toStock.length, '', () => ojGoHash('naskladneni')]);
   OJ._hk = kpi;
   const todo = [];
@@ -605,12 +643,12 @@ async function renderHome() {
   <div class="hg">
     <section class="panel dash"><div class="dash-h"><svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><b>Co teď udělat</b></div>
       <div class="dash-b nopad">${todo.length ? todo.map((t, i) => `<div class="td-row"><span class="td-i" style="--c:${t[1]}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${TI[t[0]]}</svg></span><div class="grow"><b>${t[2]}</b><div class="small muted">${t[3]}</div></div><button class="btn ${t[6] ? '' : 'primary'}" data-t="${i}">${t[4]}</button></div>`).join('') : '<div class="td-empty">✅ Všechno vyřízeno — nic nečeká na akci.</div>'}</div></section>
-    <section class="panel dash"><div class="dash-h"><svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 20V10M12 20V4M19 20v-7"/></svg><b>Aktivita nabídek</b></div>
-      <div class="dash-b"><div class="donut-w">${offerDonut(base)}</div><div class="lc-w">${lineChart(wk.vals, wk.labels)}</div><div class="small muted" style="text-align:center">nové nabídky po týdnech</div></div></section>
-    <section class="panel dash"><div class="dash-h"><svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${NAV_SVG.ct}</svg><b>Kontejnery na cestě</b><span class="grow"></span>${hasApp('kontejnery') ? '<a class="dash-lnk" href="#/kontejnery">Všechny →</a>' : ''}</div>
-      <div id="hCt" class="dash-b"><div class="sk" style="height:110px"></div></div></section>
+    ${hasApp('nabidky') ? `    <section class="panel dash"><div class="dash-h"><svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 20V10M12 20V4M19 20v-7"/></svg><b>Aktivita nabídek</b></div>
+      <div class="dash-b"><div class="donut-w">${offerDonut(base)}</div><div class="lc-w">${lineChart(wk.vals, wk.labels)}</div><div class="small muted" style="text-align:center">nové nabídky po týdnech</div></div></section>` : ''}
+    ${hasApp('kontejnery') ? `    <section class="panel dash"><div class="dash-h"><svg class="svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${NAV_SVG.ct}</svg><b>Kontejnery na cestě</b><span class="grow"></span>${hasApp('kontejnery') ? '<a class="dash-lnk" href="#/kontejnery">Všechny →</a>' : ''}</div>
+      <div id="hCt" class="dash-b"><div class="sk" style="height:110px"></div></div></section>` : ''}
   </div>
-  <section class="panel dash" style="margin-top:16px"><div class="dash-h">${svgIco('zs')}<b>Zásoby ke sledování</b><span class="grow"></span><a class="dash-lnk" href="#/zasoby">Otevřít Zásoby ›</a></div><div id="hZs" class="dash-b"><div class="sk" style="height:70px"></div></div></section>
+  ${hasApp('zasoby') ? `<section class="panel dash" style="margin-top:16px"><div class="dash-h">${svgIco('zs')}<b>Zásoby ke sledování</b><span class="grow"></span><a class="dash-lnk" href="#/zasoby">Otevřít Zásoby ›</a></div><div id="hZs" class="dash-b"><div class="sk" style="height:70px"></div></div></section>` : ''}
   ${okOj ? `<section class="panel dash" style="margin-top:16px"><div class="dash-h"><b style="font-size:18px">Objednávky dodavatelů</b><span class="grow"></span><button class="btn sm" id="hBoard">Otevřít nástěnku ›</button><button class="btn primary sm" id="hNew">＋ Nová objednávka</button></div><div class="mini-board">${ojMiniBoard(infos, 2)}</div></section>` : ''}`;
   $$('.kpi').forEach(b => b.onclick = () => OJ._hk[b.dataset.k][5]());
   $$('.td-row .btn').forEach(b => b.onclick = () => OJ._ht[b.dataset.t][5]());
@@ -626,7 +664,7 @@ async function renderHome() {
       if ($('#hCt')) $('#hCt').innerHTML = r.length ? r.map(c => `<a class="rc-row" href="#/k/${c.id}"><span class="rc-i">${svgIco('ct')}</span><div class="grow"><b>${esc(c.number || 'bez čísla')}</b> ${CT_ST[c.status] ? ctBadge(c.status) : ''}<div class="small muted">${esc(c.vessel || '')}</div></div><span class="small nowrap">ETA <b>${ctEta(c) ? czDate(ctEta(c)) : '—'}</b></span></a>`).join('') : '<div class="muted small">Žádný kontejner na cestě.</div>';
     } catch { if ($('#hCt')) $('#hCt').innerHTML = '<div class="muted small">Kontejnery nejsou k dispozici.</div>'; }
   })();
-  zsHomeCard();
+  if (hasApp('zasoby')) zsHomeCard();
 }
 
 // ---------- Inventura ----------
@@ -2257,6 +2295,7 @@ async function renderSettings() {
   const inp = (k, label, v, cls = '', type = 'text', extra = '') => `<div class="${cls}"><label>${label}</label><input name="${k}" type="${type}" value="${esc(v)}" ${extra}></div>`;
   $('#main').innerHTML = `
   ${pgHead('settings', 'Nastavení', 'Propojení se Shoptetem, kurzy, objednávky a správa týmu.')}
+  ${S.me.role === 'admin' ? `<section class="panel" style="margin-bottom:16px"><div class="panel-h">👥 Uživatelé a přístupy</div><div class="panel-b"><p class="muted" style="margin:0 0 10px">Přidávání uživatelů, přístupy do jednotlivých částí Hubu, hesla a 2FA a přehled toho, co kdo v systému dělá.</p><a class="btn primary" href="#/uzivatele">Otevřít správu uživatelů →</a></div></section>` : ''}
   <form class="stack" id="sf">
     <section class="panel"><div class="panel-h">🛒 Produkty ze Shoptetu</div><div class="panel-b">
       <div class="form">
@@ -2465,8 +2504,6 @@ async function renderAccount() {
       <div><label for="pf-email">E-mail</label><input id="pf-email" name="email" type="email" value="${esc(me.contact_email)}"></div>
       <div><button class="btn primary">Uložit</button></div>
     </div></form>
-    ${me.role === 'admin' ? `<section class="panel"><div class="panel-h">👥 Uživatelé a zabezpečení <span class="sub">správa týmu</span></div><div class="panel-b" id="usersBox"><div class="sk" style="height:120px"></div></div></section>
-    <section class="panel"><div class="panel-h">🛡️ Bezpečnostní deník <span class="sub">posledních 60 událostí</span></div><div class="panel-b" id="auditBox"><div class="sk" style="height:120px"></div></div></section>` : ''}
   </div>`);
   $('#pf').onsubmit = async e => {
     e.preventDefault(); const f = new FormData(e.target);
@@ -2505,27 +2542,98 @@ async function renderAccount() {
     if (!(await confirmBox('Odhlásit ze všech zařízení?', 'Odhlásíš se všude, i tady. Pak se přihlásíš znovu heslem a kódem.', { ok: 'Odhlásit všude', danger: true }))) return;
     logout('Byl(a) jsi odhlášen(a) ze všech zařízení.', 'global');
   };
-  if (me.role === 'admin') drawAdmin();
 }
-async function drawAdmin() {
-  const me = S.me;
-  let sec = [];
-  try { sec = (await adminCall({ action: 'list' })).users || []; } catch (err) { $('#usersBox').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
-  const info = id => sec.find(x => x.id === id) || {};
-  $('#usersBox').innerHTML = `<div class="ulist">${S.users.map(u => { const s = info(u.id); return `<div class="urow">
-      <span class="av lg">${initials(u.id)}</span>
-      <div class="grow" style="min-width:0"><b>${esc(u.name)}</b>${u.role === 'admin' ? ' <span class="tag blue">správce</span>' : ''}${u.active ? '' : ' <span class="tag grey">zablokovaný</span>'}
-        <div class="muted small">${esc(u.email)} · ${s.last_sign_in_at ? 'naposledy ' + ago(s.last_sign_in_at) : 'zatím se nepřihlásil(a)'}</div>
-        <div class="small" style="margin-top:3px">${s.mfa ? '<span class="mg ok">2FA zapnuto</span>' : '<span class="mg warn">2FA zatím nenastaveno</span>'}${u.must_change ? ' <span class="mg warn">čeká na změnu hesla</span>' : ''}</div></div>
-      ${u.id !== me.id ? `<div class="uacts"><button class="btn sm" data-a="reset" data-id="${u.id}">Nové heslo</button><button class="btn sm" data-a="reset_mfa" data-id="${u.id}" ${s.mfa ? '' : 'disabled'}>Reset 2FA</button><button class="btn sm" data-a="signout" data-id="${u.id}">Odhlásit všude</button><button class="btn sm ${u.active ? 'danger' : ''}" data-a="active" data-v="${u.active ? '0' : '1'}" data-id="${u.id}">${u.active ? 'Zablokovat' : 'Povolit'}</button></div>` : '<span class="muted small">to jsi ty</span>'}
-    </div>`; }).join('')}</div>
-    <form id="addUser" class="form" style="margin-top:16px">
+// =====================================================================
+// SPRÁVA UŽIVATELŮ — účty, přístupy do aplikací a deník činnosti (jen správce)
+// =====================================================================
+const AUDIT_LOG = { login: 'se přihlásil(a) heslem', mfa_verified: 'ověřil(a) kód 2FA', mfa_enrolled: 'nastavil(a) 2FA', logout: 'se odhlásil(a)', password_changed: 'změnil(a) heslo',
+  user_created: 'založil(a) účet', password_reset: 'vygeneroval(a) nové heslo', mfa_reset: 'resetoval(a) 2FA', signed_out_everywhere: 'odhlásil(a) ze všech zařízení', user_blocked: 'zablokoval(a)', user_unblocked: 'povolil(a)',
+  access_changed: 'změnil(a) přístupy / roli', shoptet_stock_in: 'naskladnil(a) do Shoptetu', shoptet_order_create: 'založil(a) objednávku ve Shoptetu' };
+const UA = { tab: ls.get('vh_ua_tab') === 'activity' ? 'activity' : 'users', lim: 150, f: { user: '', app: '', kind: '', days: '7', q: '' } };
+const UA_APP = { ...Object.fromEntries(APPS.map(a => [a.k, a.n])), nastaveni: 'Nastavení', uzivatele: 'Správa uživatelů' };
+const UA_FIELD = { status: 'stav', note: 'poznámka', items: 'položky', customer: 'zákazník', total: 'cena', net: 'cena bez DPH', terms: 'podmínky', deleted: 'smazání', archived: 'archivace', date: 'datum', valid_until: 'platnost', recipient: 'adresát',
+  currency: 'měna', shoptet_order: 'objednávka v Shoptetu', title: 'název', description: 'popis', done: 'splněno', due_date: 'termín', assignees: 'řešitelé', labels: 'štítky', checklist: 'úkoly', list_id: 'přesun', position: 'pořadí',
+  eta: 'ETA', etd: 'ETD', ata: 'ATA', number: 'číslo', supplier: 'dodavatel', delivered_at: 'doručeno', stocked_at: 'naskladněno', min_qty: 'hranice', value: 'hodnota', mode: 'režim', imported: 'naskladněno do Shoptetu' };
+const UA_ST = { draft: 'rozpracováno', sent: 'odesláno', confirmed: 'potvrzeno', rejected: 'zamítnuto', postponed: 'odloženo', planned: 'plánováno', sailing: 'na cestě', port: 'v přístavu', delivered: 'doručeno', counting: 'počítá se', review: 'ke schválení', done: 'uzavřeno' };
+const uaHref = r => {
+  if (!r.ref_id || r.kind === 'delete') return '';
+  return ({ 'Nabídka': '#/o/' + r.ref_id, 'Příjemka': '#/s/' + r.ref_id, 'Kontejner': '#/k/' + r.ref_id, 'Svoz': '#/svoz/' + r.ref_id, 'Inventura': '#/inventura/' + r.ref_id, 'Objednávka zákazníka': '#/oj/' + encodeURIComponent(r.ref_id), 'Rozvoz': '#/rozvozy' })[r.entity] || '';
+};
+async function renderUsers() {
+  shell('users', `${pgHead('users', 'Správa uživatelů', 'Účty, přístupy do jednotlivých částí Hubu a přehled toho, co kdo v systému dělá.')}
+  <div class="seg ua-tabs" id="uaTabs"><button data-t="users">👥 Uživatelé a přístupy</button><button data-t="activity">🕵️ Aktivita</button></div>
+  <div id="uaBody"><div class="panel panel-b"><div class="sk" style="height:200px"></div></div></div>`);
+  const setTab = t => { UA.tab = t; ls.set('vh_ua_tab', t); $$('#uaTabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t)); t === 'users' ? uaUsers() : uaActivity(); };
+  $$('#uaTabs button').forEach(b => b.onclick = () => setTab(b.dataset.t));
+  setTab(UA.tab);
+}
+async function uaUsers() {
+  const box = $('#uaBody'); if (!box) return;
+  let sec = [], act = [];
+  try {
+    await loadUsers();
+    [sec, act] = await Promise.all([
+      adminCall({ action: 'list' }).then(r => r.users || []),
+      fetchAll(() => sb.from('hub_activity').select('actor,at,kind').gte('at', new Date(Date.now() - 7 * 864e5).toISOString()).order('at', { ascending: false })).catch(() => []),
+    ]);
+  } catch (err) { box.innerHTML = `<p class="err">${esc(err.message)}</p>`; return; }
+  if ($('#uaBody') !== box) return;
+  const stat = new Map();
+  for (const r of act) { const x = stat.get(r.actor) || { n: 0, v: 0, d: 0, last: null }; if (!x.last) x.last = r.at; if (r.kind === 'view') x.v++; else if (r.kind === 'denied') x.d++; else x.n++; stat.set(r.actor, x); }
+  const orig = u => ({ role: u.role, apps: APPS.map(a => a.k).filter(k => (u.apps || []).includes(k)) });
+  const card = u => {
+    const s2 = sec.find(x => x.id === u.id) || {}, st = stat.get(u.id), me = u.id === S.me.id, adm = u.role === 'admin';
+    return `<section class="panel ua-card${u.active ? '' : ' off'}" data-id="${u.id}">
+      <div class="ua-h"><span class="av lg">${initials(u.id)}</span>
+        <div class="grow" style="min-width:0"><b>${esc(u.name)}</b>${adm ? ' <span class="tag blue">správce</span>' : ''}${u.active ? '' : ' <span class="tag grey">zablokovaný</span>'}${me ? ' <span class="tag grey">to jsi ty</span>' : ''}
+          <div class="muted small">${esc(u.email)} · ${s2.last_sign_in_at ? 'přihlášen(a) ' + ago(s2.last_sign_in_at) : 'zatím se nepřihlásil(a)'}</div>
+          <div class="small" style="margin-top:3px">${s2.mfa ? '<span class="mg ok">2FA zapnuto</span>' : '<span class="mg warn">2FA zatím nenastaveno</span>'}${u.must_change ? ' <span class="mg warn">čeká na změnu hesla</span>' : ''}
+            <span class="muted"> · ${st ? `poslední aktivita ${ago(st.last)} · za 7 dní ${st.n} ${st.n === 1 ? 'akce' : st.n >= 2 && st.n <= 4 ? 'akce' : 'akcí'}, ${st.v}× otevřená část${st.d ? `, <b class="ua-bad">${st.d}× bez přístupu</b>` : ''}` : 'za posledních 7 dní žádná aktivita'}</span></div></div>
+      </div>
+      <div class="ua-sec"><div class="ua-lbl">Role</div>
+        <div class="seg ua-role">${[['user', 'Uživatel'], ['admin', 'Správce']].map(([r, l]) => `<button type="button" data-r="${r}" class="${u.role === r ? 'on' : ''}" ${me ? 'disabled' : ''}>${l}</button>`).join('')}</div>
+        <span class="muted small ua-rolehint">${adm ? 'Správce má přístup do všech částí, spravuje uživatele a vidí deník činnosti.' : 'Uživatel vidí jen části, které mu zapneš níže.'}</span></div>
+      <div class="ua-sec"><div class="ua-lbl">Přístup do částí Hubu <span class="muted small">— co je vypnuté, uživateli se ukáže se zámkem</span></div>
+        <div class="ua-apps">${APPS.map(a => `<label class="ua-app"><input type="checkbox" data-app="${a.k}" ${adm || (u.apps || []).includes(a.k) ? 'checked' : ''} ${adm ? 'disabled' : ''}><span class="ua-ic">${svgIco(a.nav)}</span><span class="ua-n">${a.n}</span><i class="ua-lk">🔒</i></label>`).join('')}</div>
+        <div class="ua-acts"><button type="button" class="btn sm" data-all ${adm ? 'disabled' : ''}>Povolit vše</button><button type="button" class="btn sm" data-none ${adm ? 'disabled' : ''}>Zakázat vše</button><span class="grow"></span><button type="button" class="btn primary sm" data-save disabled>Uložit přístupy</button></div></div>
+      ${me ? '' : `<div class="ua-sec ua-acc"><div class="uacts"><button class="btn sm" data-a="reset" data-id="${u.id}">Nové heslo</button><button class="btn sm" data-a="reset_mfa" data-id="${u.id}" ${s2.mfa ? '' : 'disabled'}>Reset 2FA</button><button class="btn sm" data-a="signout" data-id="${u.id}">Odhlásit všude</button><button class="btn sm ${u.active ? 'danger' : ''}" data-a="active" data-v="${u.active ? '0' : '1'}" data-id="${u.id}">${u.active ? 'Zablokovat' : 'Povolit'}</button><button class="btn sm ghost" data-hist="${u.id}">Co dělal(a) →</button></div></div>`}
+    </section>`;
+  };
+  box.innerHTML = `<div class="stack">${S.users.map(card).join('')}
+    <section class="panel"><div class="panel-h">＋ Přidat uživatele</div><div class="panel-b"><form id="addUser" class="form">
       <div><label for="au-name">Jméno a příjmení</label><input id="au-name" name="name" required placeholder="Pavel Hadraba"></div>
       <div><label for="au-email">Přihlašovací e-mail</label><input id="au-email" name="email" type="email" required placeholder="hadraba.p@vinylor.cz"></div>
-      <div><button class="btn primary">＋ Přidat uživatele</button></div>
-    </form>
-    <div class="hint">Nový uživatel dostane dočasné heslo (ukáže se jen jednou). Při prvním přihlášení si nastaví vlastní heslo a 2FA.</div>`;
-  $$('#usersBox [data-a]').forEach(b => b.onclick = async () => {
+      <div class="full"><label>Do čeho bude mít přístup</label><div class="ua-apps">${APPS.map(a => `<label class="ua-app"><input type="checkbox" data-app="${a.k}" ${a.k === 'kontejnery' ? '' : 'checked'}><span class="ua-ic">${svgIco(a.nav)}</span><span class="ua-n">${a.n}</span><i class="ua-lk">🔒</i></label>`).join('')}</div></div>
+      <div><button class="btn primary">＋ Přidat uživatele</button></div></form>
+      <div class="hint">Nový uživatel dostane dočasné heslo (ukáže se jen jednou). Při prvním přihlášení si nastaví vlastní heslo a 2FA. Přístupy můžeš kdykoli změnit.</div></div></section></div>`;
+  $$('.ua-card', box).forEach(c => {
+    const u = S.users.find(x => x.id === c.dataset.id), o = orig(u), me = u.id === S.me.id;
+    const role = () => (c.querySelector('[data-r].on') || {}).dataset.r || 'user';
+    const apps = () => [...c.querySelectorAll('[data-app]')].filter(x => x.checked).map(x => x.dataset.app);
+    const dirty = () => { const r = role(); return r !== o.role || (r !== 'admin' && apps().sort().join() !== o.apps.slice().sort().join()); };
+    const upd = () => { c.querySelector('[data-save]').disabled = !dirty(); const adm = role() === 'admin'; c.querySelector('.ua-rolehint').textContent = adm ? 'Správce má přístup do všech částí, spravuje uživatele a vidí deník činnosti.' : 'Uživatel vidí jen části, které mu zapneš níže.'; };
+    let mem = o.role === 'admin' ? APPS.map(a => a.k).filter(k => k !== 'kontejnery') : o.apps.slice();
+    c.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
+      if (b.classList.contains('on') || me) return;
+      if (b.dataset.r === 'admin') mem = apps(); c.querySelectorAll('[data-r]').forEach(x => x.classList.toggle('on', x === b));
+      const adm = b.dataset.r === 'admin';
+      c.querySelectorAll('[data-app]').forEach(x => { x.disabled = adm; x.checked = adm ? true : mem.includes(x.dataset.app); });
+      c.querySelectorAll('[data-all],[data-none]').forEach(x => x.disabled = adm); upd();
+    });
+    c.querySelectorAll('[data-app]').forEach(x => x.onchange = upd);
+    const all = c.querySelector('[data-all]'), none = c.querySelector('[data-none]');
+    all.onclick = () => { c.querySelectorAll('[data-app]').forEach(x => x.checked = true); upd(); };
+    none.onclick = () => { c.querySelectorAll('[data-app]').forEach(x => x.checked = false); upd(); };
+    c.querySelector('[data-save]').onclick = async e => {
+      const r = role(), wasAdm = o.role === 'admin';
+      if (r !== o.role && !(await confirmBox(r === 'admin' ? 'Nastavit jako správce?' : 'Odebrat roli správce?', r === 'admin' ? `${u.name} bude mít přístup do všeho, bude spravovat uživatele a vidět deník činnosti.` : `${u.name} bude mít jen části, které má zapnuté.`, { ok: r === 'admin' ? 'Nastavit správcem' : 'Odebrat roli', danger: r !== 'admin' }))) return;
+      const btn = e.currentTarget; btn.disabled = true;
+      try { await adminCall({ action: 'set_access', id: u.id, role: r, apps: r === 'admin' && wasAdm ? o.apps : apps() }); toast('Přístupy uloženy ✓'); await loadUsers(); uaUsers(); }
+      catch (err) { toast(err.message, true); btn.disabled = false; }
+    };
+    const h = c.querySelector('[data-hist]'); if (h) h.onclick = () => { UA.f = { user: u.id, app: '', kind: '', days: '30', q: '' }; $$('#uaTabs button')[1].click(); };
+  });
+  $$('.ua-acc [data-a]', box).forEach(b => b.onclick = async () => {
     const id = b.dataset.id, who = userName(id), a = b.dataset.a;
     const texts = {
       reset: ['Nové heslo', `Vygenerovat nové dočasné heslo pro ${who}? Staré přestane platit a ${who} se odhlásí ze všech zařízení.`, 'Vygenerovat', false],
@@ -2537,23 +2645,77 @@ async function drawAdmin() {
     try {
       const r = await adminCall({ action: a, id, active: b.dataset.v === '1' });
       if (r.password) await passwordBox(who, r.password); else toast('Hotovo ✓');
-      await loadUsers(); drawAdmin();
+      await loadUsers(); uaUsers();
     } catch (err) { toast(err.message, true); }
   });
   $('#addUser').onsubmit = async e => {
     e.preventDefault(); const f = new FormData(e.target);
+    const apps = [...e.target.querySelectorAll('[data-app]')].filter(x => x.checked).map(x => x.dataset.app);
     try {
-      const r = await adminCall({ action: 'create', name: f.get('name'), email: f.get('email') });
-      await passwordBox(f.get('name'), r.password); await loadUsers(); drawAdmin();
+      const r = await adminCall({ action: 'create', name: f.get('name'), email: f.get('email'), apps });
+      await passwordBox(f.get('name'), r.password); await loadUsers(); uaUsers();
     } catch (err) { toast(err.message, true); }
   };
-  // bezpečnostní deník
-  const LOG = { login: 'přihlášení heslem', mfa_verified: 'ověřeno kódem 2FA', mfa_enrolled: 'nastavil(a) 2FA', logout: 'odhlášení', password_changed: 'změnil(a) heslo',
-    user_created: 'založil(a) účet', password_reset: 'vygeneroval(a) nové heslo', mfa_reset: 'resetoval(a) 2FA', signed_out_everywhere: 'odhlásil(a) ze všech zařízení', user_blocked: 'zablokoval(a)', user_unblocked: 'povolil(a)', shoptet_stock_in: 'naskladnil(a) do Shoptetu', shoptet_order_create: 'založil(a) objednávku ve Shoptetu' };
+}
+async function uaActivity() {
+  const box = $('#uaBody'); if (!box) return; const f = UA.f;
+  const opt = (v, l, cur) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`;
+  box.innerHTML = `<section class="panel"><div class="panel-b ua-fil">
+      <select id="uaU" aria-label="Uživatel">${opt('', 'Všichni uživatelé', f.user)}${S.users.map(u => opt(u.id, esc(u.name), f.user)).join('')}</select>
+      <select id="uaA" aria-label="Část Hubu">${opt('', 'Všechny části', f.app)}${Object.entries(UA_APP).map(([k, n]) => opt(k, esc(n), f.app)).join('')}</select>
+      <select id="uaK" aria-label="Druh akce">${opt('', 'Všechny akce', f.kind)}${opt('view', 'Otevření částí', f.kind)}${opt('create', 'Vytvoření', f.kind)}${opt('update', 'Úpravy', f.kind)}${opt('delete', 'Smazání', f.kind)}${opt('denied', 'Pokus bez přístupu', f.kind)}${opt('auth', 'Přihlášení a zabezpečení', f.kind)}</select>
+      <select id="uaD" aria-label="Období">${opt('1', 'Posledních 24 hodin', f.days)}${opt('7', 'Posledních 7 dní', f.days)}${opt('30', 'Posledních 30 dní', f.days)}${opt('365', 'Poslední rok', f.days)}${opt('all', 'Vše', f.days)}</select>
+      <input id="uaQ" type="search" placeholder="Hledat (číslo nabídky, jméno…)" value="${esc(f.q)}"><button class="btn sm" id="uaR" title="Obnovit">↻</button></div></section>
+    <section class="panel"><div class="panel-b" id="uaList"><div class="sk" style="height:160px"></div></div></section>`;
+  const go = () => { UA.lim = 150; uaFetch(); };
+  [['uaU', 'user'], ['uaA', 'app'], ['uaK', 'kind'], ['uaD', 'days']].forEach(([id, k]) => $('#' + id).onchange = e => { UA.f[k] = e.target.value; go(); });
+  let tm; $('#uaQ').oninput = e => { UA.f.q = e.target.value; clearTimeout(tm); tm = setTimeout(() => uaDraw(), 150); };
+  $('#uaR').onclick = go;
+  uaFetch();
+}
+let uaRows = [];
+async function uaFetch() {
+  const f = UA.f, list = $('#uaList'); if (!list) return;
+  const since = f.days === 'all' ? null : new Date(Date.now() - Number(f.days) * 864e5).toISOString();
   try {
-    const rows = check(await sb.from('hub_audit').select('*').order('at', { ascending: false }).limit(60));
-    $('#auditBox').innerHTML = rows.length ? `<div class="timeline audit">${rows.map(r => `<div><b>${esc(userName(r.actor) || '—')}</b> ${esc(LOG[r.action] || r.action)}${r.target ? ` → <b>${esc(userName(r.target) || 'účet')}</b>` : ''}${r.detail?.scope === 'global' ? ' (všude)' : ''}${r.action === 'shoptet_stock_in' ? ` (${r.detail?.ok ?? 0} ok${r.detail?.failed ? ', ' + r.detail.failed + ' chyb' : ''})` : ''}<br>${czDateTime(r.at)}${r.detail?.ua ? ` · <span title="${esc(r.detail.ua)}">${esc(/iPhone|Android/i.test(r.detail.ua) ? 'telefon' : 'počítač')}</span>` : ''}${r.detail?.ver ? ` · v${esc(r.detail.ver)}` : ''}</div>`).join('')}</div>` : '<div class="muted small">Zatím žádné události.</div>';
-  } catch (err) { $('#auditBox').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
+    let a = [], au = [];
+    if (f.kind !== 'auth') {
+      let q = sb.from('hub_activity').select('*').order('at', { ascending: false }).limit(UA.lim);
+      if (f.user) q = q.eq('actor', f.user); if (f.app) q = q.eq('app', f.app); if (f.kind) q = q.eq('kind', f.kind); if (since) q = q.gte('at', since);
+      a = check(await q);
+    }
+    if (!f.app && (!f.kind || f.kind === 'auth')) {
+      let q = sb.from('hub_audit').select('*').order('at', { ascending: false }).limit(UA.lim);
+      if (f.user) q = q.eq('actor', f.user); if (since) q = q.gte('at', since);
+      au = check(await q).map(r => ({ ...r, kind: 'auth' }));
+    }
+    uaRows = [...a, ...au].sort((x, y) => String(y.at).localeCompare(String(x.at)));
+    uaDraw(a.length >= UA.lim || au.length >= UA.lim);
+  } catch (err) { if ($('#uaList')) $('#uaList').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
+}
+function uaText(r) {
+  const who = `<b>${esc(userName(r.actor) || '—')}</b>`;
+  if (r.kind === 'auth') return `${who} ${esc(AUDIT_LOG[r.action] || r.action)}${r.target ? ` → <b>${esc(userName(r.target) || 'účet')}</b>` : ''}${r.action === 'shoptet_stock_in' ? ` (${r.detail?.ok ?? 0} ok${r.detail?.failed ? ', ' + r.detail.failed + ' chyb' : ''})` : ''}${r.detail?.scope === 'global' ? ' (všude)' : ''}`;
+  const app = `<span class="tag blue">${esc(UA_APP[r.app] || r.app || '')}</span>`;
+  if (r.kind === 'view') return `${who} otevřel(a) část ${app}`;
+  if (r.kind === 'denied') return `${who} zkusil(a) otevřít ${app} — <b class="ua-bad">nemá přístup</b>`;
+  const href = uaHref(r), lab = esc(r.label || '');
+  const what = `${esc(r.entity || 'Záznam')} ${href ? `<a href="${href}"><b>${lab}</b></a>` : `<b>${lab}</b>`}`;
+  const verb = { create: 'vytvořeno', update: 'upraveno', delete: 'smazáno' }[r.kind] || esc(r.kind);
+  const ch = (r.detail?.changed || []).map(k => UA_FIELD[k] || k); const st = r.detail?.status;
+  return `${who} ${app} ${what} — ${verb}${r.kind === 'update' && ch.length ? ` <span class="muted">(${esc(ch.join(', '))}${st ? `; stav: ${esc(UA_ST[st[0]] || st[0] || '—')} → ${esc(UA_ST[st[1]] || st[1] || '—')}` : ''})</span>` : ''}`;
+}
+function uaDraw(more) {
+  const list = $('#uaList'); if (!list) return;
+  const q = fold(UA.f.q || '').trim();
+  const rows = q ? uaRows.filter(r => fold(`${userName(r.actor)} ${r.label || ''} ${r.entity || ''} ${UA_APP[r.app] || ''} ${AUDIT_LOG[r.action] || ''}`).includes(q)) : uaRows;
+  if (!rows.length) { list.innerHTML = '<div class="muted" style="padding:10px 2px">V tomhle výběru zatím nic není.</div>'; return; }
+  let day = '';
+  list.innerHTML = `<div class="ua-log">${rows.map(r => {
+    const d = new Date(r.at), key = d.toDateString(), head = key !== day ? (day = key, `<div class="ua-day">${d.toDateString() === new Date().toDateString() ? 'Dnes' : d.toDateString() === new Date(Date.now() - 864e5).toDateString() ? 'Včera' : d.toLocaleDateString('cs-CZ', { weekday: 'long', day: 'numeric', month: 'long' })}</div>`) : '';
+    return `${head}<div class="ua-row ${r.kind}"><time title="${esc(czDateTime(r.at))}">${d.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}</time><span class="ua-dot"></span><div class="ua-tx">${uaText(r)}${r.kind === 'auth' && r.detail?.ua ? ` <span class="muted small">· ${esc(/iPhone|Android/i.test(r.detail.ua) ? 'telefon' : 'počítač')}</span>` : ''}</div></div>`;
+  }).join('')}</div>${more && !q ? '<div style="text-align:center;margin-top:12px"><button class="btn sm" id="uaMore">Načíst starší</button></div>' : ''}`;
+  if ($('#uaMore')) $('#uaMore').onclick = () => { UA.lim += 150; uaFetch(); };
 }
 
 // =====================================================================
@@ -3309,6 +3471,7 @@ async function ojOverviewExtra(el) {
   const alive = () => $('#ojBody') === el && $('#ovRc');
   const put = (id, html) => { if (alive() && $(id)) $(id).innerHTML = html; };
   try {
+    if (!hasApp('sklad')) throw 0;
     const r = check(await sb.from('stock_receipts').select('id,doc_no,supplier,date,item_count,stocked_count,imported,created_at').eq('deleted', false).order('created_at', { ascending: false }).limit(3));
     put('#ovRc', r.length ? r.map(x => `<a class="rc-row" href="#/sklad"><span class="rc-i">${svgIco('stock')}</span><div class="grow"><b>${esc(x.doc_no || 'Příjemka')}</b> <span class="stp ${x.imported ? 'ok' : 'wait'}">${x.imported ? 'Naskladněno' : 'Čeká'}</span><div class="small muted">${esc(x.supplier || '')} · ${x.item_count || 0} ks položek</div></div><span class="small muted nowrap">${x.date ? czDate(x.date) : ''}</span></a>`).join('') : '<div class="muted small" style="padding:6px 2px">Zatím žádné příjemky.</div>');
   } catch { put('#ovRc', '<div class="muted small">Nepodařilo se načíst.</div>'); }
@@ -4377,7 +4540,6 @@ function ctSeaSvg() {
 }
 const CT = { list: [], items: [], inv: [], q: '', filter: 'open', fresh: null, view: ls.get('vh_ct_view') === 'table' ? 'table' : 'cards' };
 const CT_ST = { planned: ['Plánováno', 'draft'], sailing: ['Na cestě', 'sent'], port: ['V přístavu', 'postponed'], delivered: ['Doručeno', 'confirmed'] };
-const hasApp = a => !!(S.me && Array.isArray(S.me.apps) && S.me.apps.includes(a));
 const normCt = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const normQ = s => fold(s).replace(/(\d)\s*(mm|m)\b/g, '$1$2').replace(/[^a-z0-9.,]+/g, ' ').trim();
 const daysTo = d => d ? Math.round((new Date(d + 'T12:00') - new Date(ymd(new Date()) + 'T12:00')) / 864e5) : null;

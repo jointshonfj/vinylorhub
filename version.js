@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.36.2';
+export const APP_VERSION = '0.37.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.37.0', d: '2026-11-23', t: ['Role a přístupy: správce (Filip Fenyk) v nové stránce „Správa uživatelů“ přidává uživatele, mění role a individuálně zapíná / vypíná přístup do každé části Hubu', 'Vypnuté části má uživatel v menu se zámkem 🔒; po kliknutí se mu napíše, že nemá přístup, a ukáže se kontakt na správce', 'Přístupy hlídá i databáze a servery (ne jen vzhled), změna se projeví do minuty bez nového přihlášení', 'Deník činnosti: kdo co vytvořil, upravil, smazal, kterou část otevřel a kam zkusil vstoupit bez přístupu; filtry podle uživatele, části, druhu akce a období', 'Přehled ukazuje jen karty z částí, do kterých má uživatel přístup'] },
   { v: '0.36.2', d: '2026-11-23', t: ['Rozvozy: přidán stav „Poslání platebních údajů“'] },
   { v: '0.36.1', d: '2026-11-23', t: ['Rozvozy: adresy se hledají přes oficiální geokodér ČÚZK (RUIAN) s ověřením PSČ — přesné i u obcí a čísel popisných; Photon zůstává jen jako záloha', 'Rozvozy: stavy objednávek a nové objednávky se načtou samy při otevření stránky, když jsou data starší než 15 minut'] },
   { v: '0.36.0', d: '2026-11-23', t: ['Nabídky v EUR (slovenský e-shop): tlačítko „＋ Nabídka v €“, měna u každé nabídky s přepínačem Kč / €, slovenské DPH (23 / 19 / 5 / 0 %), ceny z CZ e-shopu se přepočítají nastaveným kurzem, PDF a seznamy v €', 'Překlopení do Shoptetu u nabídek v EUR zatím není; součty na přehledu se počítají zvlášť pro Kč a €', 'Nastavení: kurz EUR pro přepočet, výchozí DPH pro EUR nabídky, účet / IBAN pro EUR'] },
