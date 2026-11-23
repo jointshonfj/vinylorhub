@@ -922,8 +922,10 @@ function drawRozvozy() {
   $('#rzSelAll').onchange = e => { rzBulk(e.target.checked); };
   $('#rzOpt').onclick = rzOptimize; $('#rzDraw').onclick = rzDraw; $('#rzClr').onclick = () => { rzClearRoute(); rzRender(false); };
   $('#rzOpen').onclick = () => rzOpenUrl(false); $('#rzNav').onclick = () => rzOpenUrl(true);
-  if ($('#rzSync')) $('#rzSync').onclick = rzSync; if ($('#rzCfg')) $('#rzCfg').onclick = rzConfig;
+  if ($('#rzSync')) $('#rzSync').onclick = () => rzSync(false); if ($('#rzCfg')) $('#rzCfg').onclick = rzConfig;
   rzRender(false); rzInitMap();
+  // stavy a nové objednávky se propisují samy: při otevření stránky, když jsou data starší než 15 minut
+  if (!RZ.auto && (!c.syncedAt || Date.now() - new Date(c.syncedAt).getTime() > 15 * 60000)) { RZ.auto = true; rzSync(true); }
 }
 async function rzInitMap() {
   const el = $('#rzMap'); if (!el) return;
@@ -1021,7 +1023,7 @@ async function rzDetail(o) {
   setTimeout(() => { const b = $('#rzCopy'); if (b) b.onclick = () => navigator.clipboard.writeText(o.address || '').then(() => toast('Adresa zkopírována ✓'), () => toast('Kopírování se nepovedlo.', true)); }, 40);
   if ((await done) === 'toggle') { if (!rzHasXY(o) && !inRoute) toast('Objednávka nemá souřadnice — v trase se nepoužije.', true); rzToggle(o.code, !inRoute); }
 }
-async function rzSync() {
+async function rzSync(silent) {
   if (RZ.sync) return; RZ.sync = true; const set = t => { const b = $('#rzSync'); if (b) { b.disabled = true; b.innerHTML = `<span class="spin"></span> ${t}`; } };
   let msg = '', warn = false;
   try {
@@ -1029,7 +1031,7 @@ async function rzSync() {
     msg = `Načteno ${r.orders} objednávek`; if (r.missing) { warn = true; msg += ` · ${r.missing} bez souřadnic (adresu se nepodařilo najít${r.geoDiag ? ': ' + r.geoDiag : ''})`; }
     await rzLoad();
   } catch (e) { warn = true; msg = e.message; }
-  RZ.sync = false; drawRozvozy(); toast(msg, warn);
+  RZ.sync = false; drawRozvozy(); if (!silent || warn) toast(msg, warn);
 }
 async function rzConfig() {
   const c = RZ.cfg || {};

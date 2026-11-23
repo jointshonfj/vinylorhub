@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.36.0';
+export const APP_VERSION = '0.36.1';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-03';
 export const CHANGELOG = [
+  { v: '0.36.1', d: '2026-11-23', t: ['Rozvozy: adresy se hledají přes oficiální geokodér ČÚZK (RUIAN) s ověřením PSČ — přesné i u obcí a čísel popisných; Photon zůstává jen jako záloha', 'Rozvozy: stavy objednávek a nové objednávky se načtou samy při otevření stránky, když jsou data starší než 15 minut'] },
   { v: '0.36.0', d: '2026-11-23', t: ['Nabídky v EUR (slovenský e-shop): tlačítko „＋ Nabídka v €“, měna u každé nabídky s přepínačem Kč / €, slovenské DPH (23 / 19 / 5 / 0 %), ceny z CZ e-shopu se přepočítají nastaveným kurzem, PDF a seznamy v €', 'Překlopení do Shoptetu u nabídek v EUR zatím není; součty na přehledu se počítají zvlášť pro Kč a €', 'Nastavení: kurz EUR pro přepočet, výchozí DPH pro EUR nabídky, účet / IBAN pro EUR'] },
   { v: '0.35.2', d: '2026-11-18', t: ['Rozvozy: adresy se při selhání Mapy.com hledají přes Photon (OpenStreetMap Nominatim servery blokuje); při neúspěchu se zobrazí důvod'] },
   { v: '0.35.1', d: '2026-11-18', t: ['Rozvozy fungují i bez klíčů Mapy.com: mapa na OpenStreetMap, adresy přes OpenStreetMap a trasa přes náhradní službu; klíče jsou nepovinné a stačí klíč pro mapu'] },

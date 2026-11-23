@@ -58,21 +58,46 @@ async function geocodeMapy(address: string, key: string): Promise<{ lat: number;
     geoDiag.mapy = 'Mapy.com adresu nenašlo'; return null;
   } catch { geoDiag.mapy = 'Mapy.com nedostupné'; return null; }
 }
-// náhradní vyhledání adres bez klíče (Photon / data OpenStreetMap; Nominatim cloudové servery blokuje)
-async function geocodePhoton(address: string): Promise<{ lat: number; lng: number } | null> {
+// oficiální geokodér ČÚZK nad RUIAN (jen ČR, bez klíče, přesný až na číslo popisné); výsledek se ověřuje podle PSČ
+type AddrParts = { street: string; zip: string; city: string; country: string };
+async function geocodeRuian(p: AddrParts): Promise<{ lat: number; lng: number } | null> {
+  if (p.country && !/česk/i.test(p.country)) return null;
+  if (!p.street || !p.city) return null;
+  const zipDigits = p.zip.replace(/\D/g, '');
+  const streets = [...new Set([p.street, p.street.replace(/\b(\d+)\/(\d+[a-z]?)\b/i, '$2'), p.street.replace(/\b(\d+)\/(\d+[a-z]?)\b/i, '$1')])];
+  const cities = [...new Set([p.city, p.city.split(/\s+/)[0]])];
+  for (const st of streets) for (const ct of cities) {
+    try {
+      const url = 'https://ags.cuzk.cz/arcgis/rest/services/RUIAN/Vyhledavaci_sluzba_nad_daty_RUIAN/MapServer/exts/GeocodeSOE/tables/1/findAddressCandidates?outSR=4326&maxLocations=8&f=json&SingleLine=' + encodeURIComponent(`${st}, ${ct}`);
+      const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) { geoDiag.ruian = 'ČÚZK HTTP ' + r.status; continue; }
+      const j = await r.json();
+      const c = (j.candidates || []).find((x: any) => Number(x.score) >= 85 && (!zipDigits || String(x.address || '').replace(/\s/g, '').includes(zipDigits)));
+      const lat = Number(c?.location?.y), lng = Number(c?.location?.x);
+      if (c && Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    } catch { geoDiag.ruian = 'ČÚZK nedostupný'; }
+  }
+  geoDiag.ruian = geoDiag.ruian || 'ČÚZK adresu nenašel';
+  return null;
+}
+// záloha pro zahraniční adresy (Photon / data OpenStreetMap; cloudové servery občas blokuje)
+async function geocodePhoton(p: AddrParts): Promise<{ lat: number; lng: number } | null> {
   try {
-    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(address)}&limit=1&lat=49.8&lon=15.5`, { headers: { 'User-Agent': 'VinylorHub-Rozvoz/1.0', 'Accept': 'application/json' } });
+    const q = [p.street, [p.zip, p.city].filter(Boolean).join(' '), p.country].filter(Boolean).join(', ');
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=5&lat=49.8&lon=15.5`, { headers: { 'User-Agent': 'VinylorHub-Rozvoz/1.0', 'Accept': 'application/json' } });
     await sleep(250);
     if (!r.ok) { geoDiag.photon = 'Photon HTTP ' + r.status; return null; }
-    const j = await r.json(); const c = j?.features?.[0]?.geometry?.coordinates;
-    const lng = Number(c?.[0]), lat = Number(c?.[1]);
+    const j = await r.json(); const zipDigits = p.zip.replace(/\D/g, '');
+    const f = (j?.features || []).find((x: any) => !zipDigits || String(x?.properties?.postcode || '').replace(/\D/g, '') === zipDigits);
+    const lng = Number(f?.geometry?.coordinates?.[0]), lat = Number(f?.geometry?.coordinates?.[1]);
     if (Number.isFinite(lat) && Number.isFinite(lng) && lat && lng) return { lat, lng };
     geoDiag.photon = 'Photon adresu nenašel'; return null;
   } catch { geoDiag.photon = 'Photon nedostupný'; return null; }
 }
-async function geocode(address: string, key: string) {
+async function geocode(p: AddrParts, address: string, key: string) {
+  const a = await geocodeRuian(p); if (a) return a;
   if (key) { const g = await geocodeMapy(address, key); if (g) return g; }
-  return await geocodePhoton(address);
+  return await geocodePhoton(p);
 }
 // náhradní trasa bez klíče (veřejný server OSRM, bez aktuální dopravy)
 async function routeOsm(pts: { lat: number; lng: number }[]) {
@@ -153,19 +178,21 @@ Deno.serve(async (req) => {
       const addrOf = (row: string[], c: 'delivery' | 'bill') => {
         const street = join([v(row, c + 'Street'), v(row, c + 'HouseNumber')], ' ');
         const city = v(row, c + 'City'), zip = v(row, c + 'Zip');
-        return { city, zip, hasData: !!(street || city), full: join([street, join([zip, city], ' '), v(row, c + 'CountryName') || 'Česká republika'], ', ') };
+        return { street, country: v(row, c + 'CountryName'), city, zip, hasData: !!(street || city), full: join([street, join([zip, city], ' '), v(row, c + 'CountryName') || 'Česká republika'], ', ') };
       };
+      const parts = new Map<string, AddrParts>();
       const orders = new Map<string, { code: string; status: string; address: string; city: string; zip: string; total: number; paid: number; items: string[] }>();
       for (const row of rows.slice(1)) {
         const code = v(row, 'code'); const st = clean(v(row, 'statusName')); const status = ALIASES[st.toLowerCase()] || st;
         if (!code || !ALLOWED.includes(status)) continue;
         const d = addrOf(row, 'delivery'); const bl = addrOf(row, 'bill'); const use = d.hasData ? d : bl;
         if (!use.hasData) continue;
+        parts.set(use.full, { street: use.street, zip: use.zip, city: use.city, country: use.country });
         if (!orders.has(code)) orders.set(code, { code, status, address: use.full, city: use.city, zip: use.zip, total: num(v(row, 'totalPriceWithVat')), paid: num(v(row, 'amountPaid')), items: [] });
         const name = v(row, 'itemName'); const amt = num(v(row, 'itemAmount'));
         if (name) orders.get(code)!.items.push((amt ? fmtAmt(amt) + '× ' : '') + name);
       }
-      // souřadnice: nejdřív z uložených objednávek (stejná adresa), nové adresy přes Mapy.com
+      // souřadnice: nejdřív z uložených objednávek (stejná adresa), nové adresy přes ČÚZK (RUIAN), záloha Mapy.com / Photon
       const cache = new Map<string, { lat: number | null; lng: number | null; tried: boolean }>();
       for (let off = 0; ; off += 1000) {
         const { data } = await sb.from('rozvoz_orders').select('address,lat,lng,geo_tried').range(off, off + 999);
@@ -175,7 +202,7 @@ Deno.serve(async (req) => {
       const need = [...new Set([...orders.values()].map(o => o.address))].filter(a => { const c = cache.get(a); return !c || !(c.lat && c.lng); }).sort((a, b) => (cache.get(a)?.tried ? 1 : 0) - (cache.get(b)?.tried ? 1 : 0));
       let geocoded = 0;
       for (const a of need.slice(0, GEO_PER_CALL)) {
-        const g = await geocode(a, key);
+        const g = await geocode(parts.get(a) || { street: '', zip: '', city: '', country: '' }, a, key);
         cache.set(a, { lat: g?.lat ?? null, lng: g?.lng ?? null, tried: true }); if (g) geocoded++;
         await sleep(80);
       }
@@ -189,6 +216,7 @@ Deno.serve(async (req) => {
       await sb.from('rozvoz_orders').delete().lt('synced_at', now);
       const missing = out.filter(o => !(o.lat && o.lng)).length;
       await sb.from('rozvoz_config').update({ synced_at: now, order_count: out.length }).eq('id', 1);
+      console.log(`rozvoz sync: orders=${out.length} geocoded=${geocoded} missing=${missing} diag=${Object.values(geoDiag).join('; ')}`);
       return json({ ok: true, orders: out.length, geocoded, missing, geoRemaining, geoDiag: Object.values(geoDiag).join('; ') });
     }
 
