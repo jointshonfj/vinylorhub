@@ -46,29 +46,33 @@ const num = (v: unknown) => { const n = Number(String(v ?? '').replace(/\s/g, ''
 const join = (a: string[], sep: string) => a.map(clean).filter(Boolean).join(sep);
 const fmtAmt = (n: number) => Number.isInteger(n) ? String(n) : String(n).replace('.', ',');
 
+const geoDiag: Record<string, string> = {};
 async function geocodeMapy(address: string, key: string): Promise<{ lat: number; lng: number } | null> {
   try {
     const r = await fetch(`https://api.mapy.com/v1/geocode?query=${encodeURIComponent(address)}&lang=cs&limit=1&apikey=${encodeURIComponent(key)}`, { headers: { 'X-Mapy-Api-Key': key, 'Accept': 'application/json' } });
-    if (!r.ok) return null;
+    if (!r.ok) { geoDiag.mapy = 'Mapy.com HTTP ' + r.status; return null; }
     const j = await r.json();
     const p = (j.items || j.results || [])[0]?.position;
     const lat = Number(p?.lat), lng = Number(p?.lon ?? p?.lng);
-    return Number.isFinite(lat) && Number.isFinite(lng) && lat && lng ? { lat, lng } : null;
-  } catch { return null; }
+    if (Number.isFinite(lat) && Number.isFinite(lng) && lat && lng) return { lat, lng };
+    geoDiag.mapy = 'Mapy.com adresu nenašlo'; return null;
+  } catch { geoDiag.mapy = 'Mapy.com nedostupné'; return null; }
 }
-// náhradní vyhledání adres bez klíče (OpenStreetMap Nominatim, max. 1 dotaz za sekundu)
-async function geocodeOsm(address: string): Promise<{ lat: number; lng: number } | null> {
+// náhradní vyhledání adres bez klíče (Photon / data OpenStreetMap; Nominatim cloudové servery blokuje)
+async function geocodePhoton(address: string): Promise<{ lat: number; lng: number } | null> {
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(address)}`, { headers: { 'User-Agent': 'VinylorHub-Rozvoz/1.0', 'Accept': 'application/json' } });
-    await sleep(1100);
-    if (!r.ok) return null;
-    const j = await r.json(); const lat = Number(j?.[0]?.lat), lng = Number(j?.[0]?.lon);
-    return Number.isFinite(lat) && Number.isFinite(lng) && lat && lng ? { lat, lng } : null;
-  } catch { return null; }
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(address)}&limit=1&lat=49.8&lon=15.5`, { headers: { 'User-Agent': 'VinylorHub-Rozvoz/1.0', 'Accept': 'application/json' } });
+    await sleep(250);
+    if (!r.ok) { geoDiag.photon = 'Photon HTTP ' + r.status; return null; }
+    const j = await r.json(); const c = j?.features?.[0]?.geometry?.coordinates;
+    const lng = Number(c?.[0]), lat = Number(c?.[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && lat && lng) return { lat, lng };
+    geoDiag.photon = 'Photon adresu nenašel'; return null;
+  } catch { geoDiag.photon = 'Photon nedostupný'; return null; }
 }
 async function geocode(address: string, key: string) {
   if (key) { const g = await geocodeMapy(address, key); if (g) return g; }
-  return await geocodeOsm(address);
+  return await geocodePhoton(address);
 }
 // náhradní trasa bez klíče (veřejný server OSRM, bez aktuální dopravy)
 async function routeOsm(pts: { lat: number; lng: number }[]) {
@@ -129,6 +133,7 @@ Deno.serve(async (req) => {
     }
 
     if (b.action === 'sync') {
+      for (const k of Object.keys(geoDiag)) delete geoDiag[k];
       if (!cfg?.csv_url) return json({ ok: false, error: 'Není nastavený odkaz na CSV export objednávek (⚙ Propojení).' });
       const key = cfg.route_key || cfg.tile_key;
       let text: string;
@@ -167,14 +172,14 @@ Deno.serve(async (req) => {
         (data || []).forEach((x: any) => cache.set(x.address, { lat: x.lat, lng: x.lng, tried: x.geo_tried }));
         if (!data || data.length < 1000) break;
       }
-      const need = [...new Set([...orders.values()].map(o => o.address))].filter(a => { const c = cache.get(a); return !c || (!(c.lat && c.lng) && !c.tried); });
+      const need = [...new Set([...orders.values()].map(o => o.address))].filter(a => { const c = cache.get(a); return !c || !(c.lat && c.lng); }).sort((a, b) => (cache.get(a)?.tried ? 1 : 0) - (cache.get(b)?.tried ? 1 : 0));
       let geocoded = 0;
       for (const a of need.slice(0, GEO_PER_CALL)) {
         const g = await geocode(a, key);
         cache.set(a, { lat: g?.lat ?? null, lng: g?.lng ?? null, tried: true }); if (g) geocoded++;
         await sleep(80);
       }
-      const geoRemaining = Math.max(0, need.length - GEO_PER_CALL);
+      const geoRemaining = need.filter(a => { const c = cache.get(a); return !(c?.lat && c?.lng) && !c?.tried; }).length;
       const now = new Date().toISOString();
       const out = [...orders.values()].map(o => { const c = cache.get(o.address); return { code: o.code, status: o.status, address: o.address, city: o.city, zip: o.zip, lat: c?.lat ?? null, lng: c?.lng ?? null, total: o.total, paid: o.paid, items: [...new Set(o.items)].join(' | '), geo_tried: !!c?.tried || !!(c?.lat && c?.lng), synced_at: now }; });
       for (let i = 0; i < out.length; i += 200) {
@@ -184,7 +189,7 @@ Deno.serve(async (req) => {
       await sb.from('rozvoz_orders').delete().lt('synced_at', now);
       const missing = out.filter(o => !(o.lat && o.lng)).length;
       await sb.from('rozvoz_config').update({ synced_at: now, order_count: out.length }).eq('id', 1);
-      return json({ ok: true, orders: out.length, geocoded, missing, geoRemaining });
+      return json({ ok: true, orders: out.length, geocoded, missing, geoRemaining, geoDiag: Object.values(geoDiag).join('; ') });
     }
 
     if (b.action === 'route') {

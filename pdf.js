@@ -42,7 +42,8 @@ function buildDoc(o, settings, issuer, logo) {
   const C = window.Calc, M = C.money;
   const sup = settings.supplier || {};
   const c = o.customer || {};
-  const t = C.totals(o, settings.priceStep);
+  const eur = o.currency === 'EUR'; const CUR = eur ? '€' : 'Kč';
+  const t = C.totals(o, eur ? 0.01 : settings.priceStep);
   const terms = String(o.terms || '').replace(/\{platnost\}/g, czLong(o.validUntil));
   const COLW = 237;
 
@@ -81,7 +82,7 @@ function buildDoc(o, settings, issuer, logo) {
     columnGap: 41,
     columns: [
       party('Dodavatel', sup.company, '', [sup.street, sup.city], [
-        ['IČO', sup.ico], ['DIČ', sup.dic], ['Telefon', sup.phone], ['Mobil', sup.mobile], ['E-mail', sup.email], ['Účet', sup.bank],
+        ['IČO', sup.ico], ['DIČ', sup.dic], ['Telefon', sup.phone], ['Mobil', sup.mobile], ['E-mail', sup.email], ['Účet', eur ? (sup.bankEur || sup.bank) : sup.bank],
       ]),
       party('Odběratel', c.company || c.name, c.company && c.name ? c.name : '', [c.street, c.city, c.country && c.country !== 'Česká republika' ? c.country : ''], [
         ['IČO', c.ico], ['DIČ', c.dic], ['Telefon', c.phone], ['E-mail', c.email],
@@ -106,10 +107,10 @@ function buildDoc(o, settings, issuer, logo) {
         it.code ? { text: it.code, fontSize: 7.5, color: GREY, margin: [0, 1, 0, 0] } : '',
       ] },
       { text: `${C.qtyFmt(it.qty)} ${it.unit || ''}`, alignment: 'right', noWrap: true },
-      { text: M(l.unitNet) + ' Kč', alignment: 'right', noWrap: true },
+      { text: M(l.unitNet) + ' ' + CUR, alignment: 'right', noWrap: true },
       { text: Number(it.discount) ? C.qtyFmt(it.discount) + ' %' : '—', alignment: 'right', noWrap: true, color: Number(it.discount) ? INK : GREY },
       { text: C.qtyFmt(it.vatRate) + ' %', alignment: 'right', noWrap: true },
-      { text: M(l.net) + ' Kč', alignment: 'right', noWrap: true },
+      { text: M(l.net) + ' ' + CUR, alignment: 'right', noWrap: true },
     ]);
   });
   if (!(o.items || []).length) body.push([{ text: 'Bez položek', color: GREY, colSpan: 6 }, '', '', '', '', '']);
@@ -129,7 +130,7 @@ function buildDoc(o, settings, issuer, logo) {
   const rates = {};
   (o.items || []).forEach((it, i) => { const k = it.vatRate; rates[k] = rates[k] || { net: 0, tax: 0 }; rates[k].net += t.lines[i].net; rates[k].tax += t.lines[i].tax; });
   const recapBody = [[th('Sazba', 'left'), th('Základ'), th('DPH')]];
-  for (const [rate, v] of Object.entries(rates)) recapBody.push([C.qtyFmt(rate) + ' %', { text: M(C.r2(v.net)) + ' Kč', alignment: 'right' }, { text: M(C.r2(v.tax)) + ' Kč', alignment: 'right' }]);
+  for (const [rate, v] of Object.entries(rates)) recapBody.push([C.qtyFmt(rate) + ' %', { text: M(C.r2(v.net)) + ' ' + CUR, alignment: 'right' }, { text: M(C.r2(v.tax)) + ' ' + CUR, alignment: 'right' }]);
   const totals = {
     margin: [0, 14, 0, 0],
     unbreakable: true,
@@ -140,7 +141,7 @@ function buildDoc(o, settings, issuer, logo) {
         { margin: [0, 6, 0, 0], ...rule(250, 2, '#444') },
         { columns: [
           { text: 'Celkem k úhradě', color: GREY, margin: [0, 9, 0, 0] },
-          { text: M(t.total) + ' Kč', fontSize: 19, bold: true, alignment: 'right', margin: [0, 4, 0, 0] },
+          { text: M(t.total) + ' ' + CUR, fontSize: 19, bold: true, alignment: 'right', margin: [0, 4, 0, 0] },
         ] },
       ] },
     ],

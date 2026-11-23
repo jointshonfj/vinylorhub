@@ -189,12 +189,24 @@ function popMenu(anchor, items) {
 
 // ---------- data ----------
 const fromRow = r => ({
-  id: r.id, archived: !!r.archived, archivedAt: r.archived_at || null, number: r.number, status: r.status, statusAt: r.status_at, date: r.date, validUntil: r.valid_until,
+  id: r.id, currency: r.currency === 'EUR' ? 'EUR' : 'CZK', archived: !!r.archived, archivedAt: r.archived_at || null, number: r.number, status: r.status, statusAt: r.status_at, date: r.date, validUntil: r.valid_until,
   customer: { ...emptyCustomer(), ...(r.customer || {}) }, recipient: r.recipient || '', items: r.items || [],
   note: r.note || '', terms: r.terms || '', shoptetOrder: r.shoptet_order || '', net: Number(r.net), total: Number(r.total),
   createdBy: r.created_by, issuedBy: r.issued_by, lastEditBy: r.last_edit_by, version: r.version,
   createdAt: r.created_at, updatedAt: r.updated_at, commentCount: r.offer_comments ? r.offer_comments[0]?.count || 0 : 0,
 });
+// nabídky v eurech (slovenský e-shop): měna je u každé nabídky, ceny z CZ feedu se přepočítají kurzem a slovenským DPH
+const offSym = o => (o && o.currency === 'EUR' ? '€' : 'Kč');
+const offMoney = (n, o) => M(n) + ' ' + offSym(o);
+const offStep = (o, st) => (o && o.currency === 'EUR' ? 0.01 : st.priceStep);
+const offVatOpts = o => (o && o.currency === 'EUR' ? [23, 19, 5, 0] : [21, 12, 0]);
+const offVatDefault = (o, st) => (o && o.currency === 'EUR' ? Number(st.defaultVatEur) || 23 : Number(st.defaultVat) || 21);
+const VAT_CZ_TO_SK = { 21: 23, 12: 19, 0: 0 }, VAT_SK_TO_CZ = { 23: 21, 19: 12, 5: 12, 0: 0 };
+const offRate = st => Number(st.eurRate) || 24.2;
+// cena s DPH v CZK (český e-shop) → cena s DPH v EUR (výchozí návrh, jde přepsat)
+const czkToEur = (price, st) => Calc.r2(Number(price || 0) / (1 + (Number(st.defaultVat) || 21) / 100) / offRate(st) * (1 + (Number(st.defaultVatEur) || 23) / 100));
+const sumByCur = list => { const c = list.filter(o => o.currency !== 'EUR').reduce((a, o) => a + o.total, 0), e = list.filter(o => o.currency === 'EUR').reduce((a, o) => a + o.total, 0); return { czk: c, eur: e }; };
+const sumTxtCur = list => { const { czk, eur } = sumByCur(list); return [czk || !eur ? M(czk).replace(/,\d\d$/, '') + ' Kč' : '', eur ? M(eur).replace(/,\d\d$/, '') + ' €' : ''].filter(Boolean).join(' + '); };
 async function loadSettings() {
   S.settings = check(await sb.from('hub_settings').select('*').eq('id', 1).single());
   return S.settings;
@@ -1014,7 +1026,7 @@ async function rzSync() {
   let msg = '', warn = false;
   try {
     let r, guard = 0; do { set(guard ? 'Doplňuji souřadnice…' : 'Stahuji objednávky…'); r = await rzCall({ action: 'sync' }); if (r.ok === false) throw new Error(r.error); } while (r.geoRemaining > 0 && ++guard < 12);
-    msg = `Načteno ${r.orders} objednávek`; if (r.missing) { warn = true; msg += ` · ${r.missing} bez souřadnic (adresu se nepodařilo najít)`; }
+    msg = `Načteno ${r.orders} objednávek`; if (r.missing) { warn = true; msg += ` · ${r.missing} bez souřadnic (adresu se nepodařilo najít${r.geoDiag ? ': ' + r.geoDiag : ''})`; }
     await rzLoad();
   } catch (e) { warn = true; msg = e.message; }
   RZ.sync = false; drawRozvozy(); toast(msg, warn);
@@ -1353,7 +1365,7 @@ async function invApply() {
 }
 
 // ---------- přehled nabídek ----------
-const OFFER_LIST_COLS = 'id,archived,archived_at,number,status,status_at,date,valid_until,customer,created_by,issued_by,updated_at,created_at,note,shoptet_order,net,total,version,offer_comments(count)';
+const OFFER_LIST_COLS = 'id,archived,archived_at,number,status,status_at,date,valid_until,customer,created_by,issued_by,updated_at,created_at,note,shoptet_order,net,total,currency,version,offer_comments(count)';
 async function refreshOffers(silent) {
   const rows = await fetchAll(() => sb.from('offers').select(OFFER_LIST_COLS).eq('deleted', false).order('created_at', { ascending: false }));
   S.offers = rows.map(fromRow);
@@ -1379,8 +1391,8 @@ function filteredOffers() {
     return fold([o.number, c.name, c.company, c.email, c.phone, c.city, c.ico, o.note, o.shoptetOrder].join(' ')).includes(q);
   });
 }
-async function newOffer(copyFrom = null) {
-  const o = check(await sb.rpc('hub_create_offer', { p_copy_from: copyFrom }));
+async function newOffer(copyFrom = null, currency = 'CZK') {
+  const o = check(await sb.rpc('hub_create_offer', { p_copy_from: copyFrom, p_currency: currency }));
   location.hash = '#/o/' + o.id;
   return o;
 }
@@ -1393,6 +1405,7 @@ function drawOffers() {
       <option value="">Všichni</option>
       ${S.users.map(u => `<option value="${u.id}" ${S.who === u.id ? 'selected' : ''}>${u.id === S.me.id ? 'Moje' : esc(u.name)}</option>`).join('')}
     </select>
+    <button class="btn of-new" id="newOfferEur" title="Nová nabídka v eurech (slovenský e-shop)">＋ Nabídka v €</button>
     <button class="btn primary of-new" id="newOffer" title="Nová nabídka (N)">＋ Nová nabídka</button></div>
   <div class="of-tabsrow"><div class="seg of-seg"><i class="seg-thumb"></i><button data-v="over" class="${S.view === 'over' ? 'on' : ''}">Přehled</button><button data-v="board" class="${S.view === 'board' ? 'on' : ''}">Nástěnka</button><button data-v="list" class="${S.view === 'list' ? 'on' : ''}">Seznam</button><button data-v="archive" class="${S.view === 'archive' ? 'on' : ''}">📦 Archiv <span class="muted">${S.offers.filter(o => o.archived).length}</span></button></div>
     <div class="search of-search grow"><span class="ic">⌕</span><input id="q" placeholder="Hledat číslo, zákazníka, IČO, telefon…" value="${esc(S.q)}"><span class="hint-k"><kbd>/</kbd></span></div></div>
@@ -1401,6 +1414,7 @@ function drawOffers() {
   </div>`;
   main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter');
   $('#newOffer').onclick = async e => { const b = e.currentTarget; b.disabled = true; b.innerHTML = '<span class="spin"></span> Zakládám…'; try { await newOffer(); } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = '＋ Nová nabídka'; } };
+  $('#newOfferEur').onclick = async e => { const b = e.currentTarget; b.disabled = true; b.innerHTML = '<span class="spin"></span> Zakládám…'; try { await newOffer(null, 'EUR'); } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = '＋ Nabídka v €'; } };
   $('#q').oninput = e => { S.q = e.target.value; drawOffersBody(); };
   $('#who').onchange = e => { S.who = e.target.value; drawStats(); drawOffersBody(); };
   const placeThumb = () => { const seg = $('.of-seg', main), on = $('.seg button.on', main), th = $('.seg-thumb', main); if (!seg || !on || !th) return; th.style.width = on.offsetWidth + 'px'; th.style.transform = `translateX(${on.offsetLeft}px)`; };
@@ -1426,8 +1440,8 @@ function drawStats() {
   const won = list.filter(o => o.status === 'confirmed'); const rej = list.filter(o => o.status === 'rejected');
   const wonM = won.filter(o => String(o.statusAt).slice(0, 7) === month);
   const sum = a => a.reduce((x, o) => x + o.total, 0);
-  const wk = weekSeries(list, o => o.total);
-  const since = ymd(new Date(Date.now() - 30 * 864e5)); const v30 = sum(list.filter(o => String(o.date).slice(0, 10) >= since));
+  const wk = weekSeries(list.filter(o => o.currency !== 'EUR'), o => o.total);
+  const since = ymd(new Date(Date.now() - 30 * 864e5)); const v30l = list.filter(o => String(o.date).slice(0, 10) >= since); const v30 = sum(v30l.filter(o => o.currency !== 'EUR')); const v30e = sum(v30l.filter(o => o.currency === 'EUR'));
   const IC = { doc: NAV_SVG.offers, ok: '<path d="m5 12.5 4.5 4.5L19 7.5"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>' };
   const k = (ic, c, v, l, extra = '') => `<div class="panel ostat" style="--c:${c}"><span class="kpi-i"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[ic]}</svg></span><div><b>${v}</b><span>${l}</span>${extra}</div></div>`;
   el.innerHTML = `<div class="of-strip">
@@ -1435,7 +1449,7 @@ function drawStats() {
     ${k('ok', 'var(--s-confirmed)', won.length, 'Překlopené', wonM.length ? `<em class="kpi-pill ok">tento měsíc ${wonM.length}</em>` : '')}
     ${k('x', 'var(--s-rejected)', rej.length, 'Zamítnuté')}
     <div class="panel ostat donut-card">${offerDonut(list, 40)}</div>
-    <div class="panel ostat chart-card"><div class="cc-h"><span>Hodnota nabídek (30 dní)</span><b>${M(v30).replace(/,\d\d$/, '')} Kč</b></div>${lineChart(wk.vals, wk.labels)}</div>
+    <div class="panel ostat chart-card"><div class="cc-h"><span>Hodnota nabídek (30 dní)</span><b>${M(v30).replace(/,\d\d$/, '')} Kč${v30e ? ` + ${M(v30e).replace(/,\d\d$/, '')} €` : ''}</b></div>${lineChart(wk.vals, wk.labels)}</div>
   </div>`;
 }
 async function changeStatus(o, status) {
@@ -1478,9 +1492,9 @@ function drawOfferBoard(ov, list, movedId, cap) {
   ov.innerHTML = `<div class="board">${STATUS_ORDER.map(s => {
     const all = list.filter(o => o.status === s).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const cards = cap ? all.slice(0, cap) : all;
-    const sum = all.reduce((a, o) => a + o.total, 0);
+    const sumTxt = all.length ? sumTxtCur(all) : '';
     return `<section class="col" data-s="${s}" data-drop="${s}">
-      <div class="col-h">${esc(STATUSES[s])} <span class="cnt">${all.length}</span>${all.length && (s === 'confirmed' || s === 'rejected') ? `<button class="colarch" data-arch="${s}" title="Archivovat všechny nabídky v tomto sloupci">📦</button>` : ''}<span class="sum">${all.length ? M(sum).replace(/,\d\d$/, '') + ' Kč' : ''}</span></div>
+      <div class="col-h">${esc(STATUSES[s])} <span class="cnt">${all.length}</span>${all.length && (s === 'confirmed' || s === 'rejected') ? `<button class="colarch" data-arch="${s}" title="Archivovat všechny nabídky v tomto sloupci">📦</button>` : ''}<span class="sum">${sumTxt}</span></div>
       <div class="col-body">${cards.map((o, i) => card(o, i, o.id === movedId)).join('') || `<div class="empty">${esc(STATUS_HINT[s])}</div>`}</div>
       ${cap && all.length > cap ? `<button class="mb-more" data-more>+ ${all.length - cap} dalších</button>` : ''}
       ${cards.length > 6 ? `<div class="col-more">↓ dalších ${cards.length - 6} — posuň v sloupci, starší dej do archivu 📦</div>` : ''}
@@ -1549,7 +1563,7 @@ function drawArchive(ov, list) {
       <td>${highlight(custLabel(o.customer), S.q)}<div class="muted small">${esc([o.customer.email, o.customer.phone].filter(Boolean).join(' · '))}</div></td>
       <td>${stat(o.status)}${o.shoptetOrder ? `<div class="muted small">🛒 ${esc(o.shoptetOrder)}</div>` : ''}</td>
       <td class="nowrap">${czDate(o.date)}</td><td class="nowrap">${o.archivedAt ? czDate(String(o.archivedAt).slice(0, 10)) : '—'}</td>
-      <td class="nowrap">${esc(userName(o.issuedBy))}</td><td class="r nowrap num-t"><b>${M(o.total)}</b></td>
+      <td class="nowrap">${esc(userName(o.issuedBy))}</td><td class="r nowrap num-t"><b>${M(o.total)}${o.currency === 'EUR' ? ' €' : ''}</b></td>
       <td><button class="btn sm" data-un="${o.id}">↩ Vrátit</button></td></tr>`).join('') || `<tr><td colspan="8" class="empty">${S.q ? 'Nic nenalezeno' : 'Archiv je prázdný. Nabídku archivuješ tlačítkem 📦 na kartě.'}</td></tr>`}</tbody></table></div>`;
   $$('tr.click', ov).forEach(r => r.onclick = e => { if (e.target.closest('[data-un]')) return; location.hash = '#/o/' + r.dataset.id; });
   $$('[data-un]', ov).forEach(b => b.onclick = e => { e.stopPropagation(); archiveOffers([b.dataset.un], false); });
@@ -1568,7 +1582,7 @@ function card(o, i, moved) {
       ${o.shoptetOrder ? `<span title="Objednávka v Shoptetu">🛒 ${esc(o.shoptetOrder)}</span>` : ''}
       <button class="archbtn" title="Archivovat">📦</button>
       <button class="st stbtn" data-s="${o.status}" title="Změnit stav">Stav ▾</button>
-      <span class="price">${M(o.total)} Kč</span>
+      <span class="price">${offMoney(o.total, o)}</span>
     </div>
   </article>`;
 }
@@ -1587,8 +1601,8 @@ function drawList(ov, list) {
       <td class="nowrap">${czDate(o.date)}</td>
       <td class="nowrap ${o.validUntil < ymd(new Date()) ? 'muted' : ''}">${czDate(o.validUntil)}</td>
       <td class="nowrap">${esc(userName(o.issuedBy))}</td>
-      <td class="r nowrap num-t">${M(o.net)}</td>
-      <td class="r nowrap num-t"><b>${M(o.total)}</b></td>
+      <td class="r nowrap num-t">${M(o.net)}${o.currency === 'EUR' ? ' €' : ''}</td>
+      <td class="r nowrap num-t"><b>${M(o.total)}${o.currency === 'EUR' ? ' €' : ''}</b></td>
     </tr>`).join('') || '<tr><td colspan="8" class="empty">Nic nenalezeno</td></tr>'}</tbody>
   </table></div>`;
   $$('.chip', ov).forEach(c => c.onclick = () => { S.fStatus = c.dataset.f; drawOffersBody(); });
@@ -1623,7 +1637,7 @@ async function renderEditor(id) {
 
   const E = { dirty: false, saving: null, timer: null };
   const st = cfg();
-  const step = st.priceStep;
+  let step = offStep(o, st); let CUR = offSym(o);
   const c = o.customer;
   const field = (k, label, cls = 'c2', type = 'text', ph = '') => `<div class="${cls}"><label>${label}</label><input data-c="${k}" type="${type}" value="${esc(c[k])}" placeholder="${esc(ph)}"></div>`;
   const plusDays = n => { const d = new Date(o.date + 'T00:00'); d.setDate(d.getDate() + n); return ymd(d); };
@@ -1662,7 +1676,7 @@ async function renderEditor(id) {
       </section>
 
       <section class="panel">
-        <div class="panel-h"><span class="step" id="step2">2</span>Položky <span class="sub">— ceny z e-shopu jsou s DPH, v PDF se přepočítají bez DPH</span></div>
+        <div class="panel-h"><span class="step" id="step2">2</span>Položky <span class="sub" id="itemsSub">— ceny z e-shopu jsou s DPH, v PDF se přepočítají bez DPH</span></div>
         <div class="panel-b">
           <div class="row">
             <div class="search big grow" id="ps"><span class="ic">⌕</span><input id="pq" placeholder="Přidat produkt — kód nebo název, např. „teak 3,6“ nebo W-01-02" autocomplete="off"><div class="results" id="pr" hidden></div></div>
@@ -1712,6 +1726,8 @@ async function renderEditor(id) {
           <div><label>Datum</label><input type="date" data-f="date" value="${esc(o.date)}"></div>
           <div><label>Platnost do</label><input type="date" data-f="validUntil" value="${esc(o.validUntil)}">
             <div class="quick" id="quickValid"><button data-d="7">+7 d</button><button data-d="14">+14 d</button><button data-d="30">+30 d</button></div></div>
+          <div style="grid-column:span 2"><label>Měna nabídky</label><div class="seg" id="curSegO" style="width:100%"><button data-c="CZK" class="${o.currency === 'EUR' ? '' : 'on'}" style="flex:1">Kč</button><button data-c="EUR" class="${o.currency === 'EUR' ? 'on' : ''}" style="flex:1">€ EUR</button></div>
+            <div class="hint" id="curHint" style="margin-top:6px">${o.currency === 'EUR' ? `EUR: DPH ${offVatDefault(o, st)} %, ceny z CZ e-shopu se přepočítají kurzem ${numStr(offRate(st))} Kč/€ — uprav je podle slovenského e-shopu.` : ''}</div></div>
           <div style="grid-column:span 2"><label>Vystavil</label><select data-f="issuedBy">${S.users.map(u => `<option value="${u.id}" ${o.issuedBy === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
         </div>
       </section>
@@ -1735,8 +1751,8 @@ async function renderEditor(id) {
   bar.className = 'sumbar';
   bar.innerHTML = `
     <div class="m hide-m"><span>Položek</span><b id="sbCount">0</b></div>
-    <div class="m hide-m"><span>Bez DPH</span><b id="sbNet" class="num-t">0,00 Kč</b></div>
-    <div class="m hide-m"><span>DPH</span><b id="sbTax" class="num-t">0,00 Kč</b></div>
+    <div class="m hide-m"><span>Bez DPH</span><b id="sbNet" class="num-t">0,00 ${CUR}</b></div>
+    <div class="m hide-m"><span>DPH</span><b id="sbTax" class="num-t">0,00 ${CUR}</b></div>
     <div class="m tot"><span>Celkem s DPH</span><b id="sbTotal" class="num-t">0,00</b></div>
     <span class="grow"></span>
     <button class="btn" id="pdfView">👁 <span class="hide-m">Náhled</span></button>
@@ -1754,7 +1770,7 @@ async function renderEditor(id) {
   // --- položky ---
   const lineCalc = it => Calc.line(it, step);
   const open = new Set(); // rozbalené řádky (úprava ceny, slevy, kódu…)
-  const priceLine = it => `${M(it.priceVat)} Kč / ${esc(it.unit || 'ks')}${Number(it.discount) ? ` · sleva ${numStr(it.discount)} %` : ''}${Number(it.vatRate) !== 21 ? ` · DPH ${numStr(it.vatRate)} %` : ''}`;
+  const priceLine = it => `${M(it.priceVat)} ${CUR} / ${esc(it.unit || 'ks')}${Number(it.discount) ? ` · sleva ${numStr(it.discount)} %` : ''}${Number(it.vatRate) !== offVatDefault(o, st) ? ` · DPH ${numStr(it.vatRate)} %` : ''}`;
   function itemRow(it, n, isNew) {
     const l = lineCalc(it);
     const isOpen = open.has(it.id);
@@ -1768,18 +1784,18 @@ async function renderEditor(id) {
           <button class="it-price" data-a="edit" title="Upravit cenu, slevu, DPH">${priceLine(it)} <span class="pen">✎</span></button>
         </div>
         <div class="it-qty"><div class="stepper"><button data-a="minus" tabindex="-1" aria-label="Méně">−</button><input data-k="qty" inputmode="decimal" value="${esc(numStr(it.qty))}" aria-label="Množství"><span class="u" data-o="unit">${esc(it.unit || 'ks')}</span><button data-a="plus" tabindex="-1" aria-label="Více">+</button></div></div>
-        <div class="it-sum"><b data-o="total">${M(l.total)} Kč</b><span data-o="net">${M(l.net)} bez DPH</span></div>
+        <div class="it-sum"><b data-o="total">${M(l.total)} ${CUR}</b><span data-o="net">${M(l.net)} bez DPH</span></div>
         <button class="ib del it-rm" data-a="rm" title="Odebrat položku">✕</button>
       </div>
       <div class="it-edit">
         <div class="f2"><label>Název</label><textarea data-k="name" rows="1">${esc(it.name)}</textarea></div>
         <div><label>Kód</label><input data-k="code" value="${esc(it.code)}"></div>
         <div><label>Varianta</label><input data-k="variant" value="${esc(it.variant)}"></div>
-        <div><label>Cena/j s DPH</label><div class="fld"><input data-k="priceVat" inputmode="decimal" value="${esc(numStr(it.priceVat))}"><span class="suf">Kč</span></div></div>
+        <div><label>Cena/j s DPH</label><div class="fld"><input data-k="priceVat" inputmode="decimal" value="${esc(numStr(it.priceVat))}"><span class="suf">${CUR}</span></div></div>
         <div><label>Jednotka</label><input data-k="unit" value="${esc(it.unit)}"></div>
         <div><label>Sleva</label><div class="fld"><input data-k="discount" inputmode="decimal" value="${esc(numStr(it.discount))}"><span class="suf">%</span></div></div>
-        <div><label>DPH</label><select data-k="vatRate">${[21, 12, 0].map(r => `<option value="${r}" ${Number(it.vatRate) === r ? 'selected' : ''}>${r} %</option>`).join('')}</select></div>
-        <div class="f2 it-edit-foot"><span class="muted small" data-o="unitNet">Jedn. cena bez DPH: ${M(l.unitNet)} Kč</span><button class="btn sm" data-a="edit">Hotovo</button></div>
+        <div><label>DPH</label><select data-k="vatRate">${[...new Set([...offVatOpts(o), Number(it.vatRate)])].map(r => `<option value="${r}" ${Number(it.vatRate) === r ? 'selected' : ''}>${r} %</option>`).join('')}</select></div>
+        <div class="f2 it-edit-foot"><span class="muted small" data-o="unitNet">Jedn. cena bez DPH: ${M(l.unitNet)} ${CUR}</span><button class="btn sm" data-a="edit">Hotovo</button></div>
       </div>
     </div>`;
   }
@@ -1787,7 +1803,7 @@ async function renderEditor(id) {
     const t = Calc.totals(o, step);
     $('#items').innerHTML = o.items.length
       ? `<div class="items">${o.items.map((it, i) => itemRow(it, i + 1, it.id === newId)).join('')}</div>
-         <div class="it-total"><span>Bez DPH</span><b data-o="tnet">${M(t.net)} Kč</b><span>DPH</span><b data-o="ttax">${M(t.tax)} Kč</b><span class="big">Celkem s DPH</span><b class="big" data-o="ttot">${M(t.total)} Kč</b></div>`
+         <div class="it-total"><span>Bez DPH</span><b data-o="tnet">${M(t.net)} ${CUR}</b><span>DPH</span><b data-o="ttax">${M(t.tax)} ${CUR}</b><span class="big">Celkem s DPH</span><b class="big" data-o="ttot">${M(t.total)} ${CUR}</b></div>`
       : `<div class="items-empty" style="margin-top:12px"><b>Zatím žádné položky</b>Začni psát do vyhledávání nad tímto polem — stačí kus názvu nebo kód produktu.</div>`;
     $('#itemsFoot').style.display = o.items.length ? '' : 'none';
     $$('#items textarea[data-k="name"]').forEach(autoGrow);
@@ -1796,18 +1812,18 @@ async function renderEditor(id) {
   function drawTotals() {
     const t = Calc.totals(o, step);
     $('#sbCount').textContent = o.items.length;
-    $('#sbNet').textContent = M(t.net) + ' Kč';
-    $('#sbTax').textContent = M(t.tax) + ' Kč';
-    tween($('#sbTotal'), t.total, n => M(n) + ' Kč');
-    const set = (k, v) => { const el = $(`#items [data-o="${k}"]`); if (el) el.textContent = M(v) + ' Kč'; };
+    $('#sbNet').textContent = M(t.net) + ' ' + CUR;
+    $('#sbTax').textContent = M(t.tax) + ' ' + CUR;
+    tween($('#sbTotal'), t.total, n => M(n) + ' ' + CUR);
+    const set = (k, v) => { const el = $(`#items [data-o="${k}"]`); if (el) el.textContent = M(v) + ' ' + CUR; };
     set('tnet', t.net); set('ttax', t.tax); set('ttot', t.total);
   }
   function updateRow(it) {
     const row = $(`.it[data-id="${it.id}"]`); if (!row) return;
     const l = lineCalc(it);
-    $('[data-o="total"]', row).textContent = M(l.total) + ' Kč';
+    $('[data-o="total"]', row).textContent = M(l.total) + ' ' + CUR;
     $('[data-o="net"]', row).textContent = M(l.net) + ' bez DPH';
-    $('[data-o="unitNet"]', row).textContent = `Jedn. cena bez DPH: ${M(l.unitNet)} Kč`;
+    $('[data-o="unitNet"]', row).textContent = `Jedn. cena bez DPH: ${M(l.unitNet)} ${CUR}`;
     $('[data-o="name"]', row).innerHTML = esc(it.name) || '<span class="muted">Bez názvu</span>';
     $('[data-o="sub"]', row).innerHTML = [it.code, it.variant].filter(Boolean).map(esc).join(' · ');
     $('[data-o="unit"]', row).textContent = it.unit || 'ks';
@@ -1864,7 +1880,7 @@ async function renderEditor(id) {
     }
     const it = {
       id: rid(), code: p ? p.code : '', name: p ? p.name : '', variant: p ? p.variant : '', qty: 1, unit: 'ks',
-      priceVat: p ? p.priceVat : 0, discount: p ? Number(st.defaultDiscount) || 0 : 0, vatRate: Number(st.defaultVat) || 21,
+      priceVat: p ? (o.currency === 'EUR' ? czkToEur(p.priceVat, st) : p.priceVat) : 0, discount: p ? Number(st.defaultDiscount) || 0 : 0, vatRate: offVatDefault(o, st),
     };
     if (!p) open.add(it.id);
     o.items.push(it); drawItems(it.id); markDirty();
@@ -1917,8 +1933,8 @@ async function renderEditor(id) {
     fetch: async q => { if (!S.products) await loadProducts(); return searchProducts(q, $('#phid').checked); },
     render: list => { const q = $('#pq').value; return list.length ? list.map((p, i) => `<div class="res" data-i="${i}">
       <code>${highlight(p.code, q)}</code>
-      <div>${highlight(p.name, q)}${p.visible ? '' : '<span class="tag grey">skrytý</span>'}${p.actionPrice ? `<span class="tag">akce ${M(p.actionPrice)}</span>` : ''}${o.items.some(x => x.code === p.code) ? '<span class="tag blue">v nabídce</span>' : ''}${p.variant ? `<div class="v">${highlight(p.variant, q)}</div>` : ''}</div>
-      <div class="p">${M(p.priceVat)} Kč</div></div>`).join('') : `<div class="empty">${S.products ? 'Nic nenalezeno — zkus kratší dotaz nebo zaškrtni „i skryté“' : 'Načítám produkty…'}</div>`; },
+      <div>${highlight(p.name, q)}${p.visible ? '' : '<span class="tag grey">skrytý</span>'}${p.actionPrice ? `<span class="tag">akce ${M(o.currency === 'EUR' ? czkToEur(p.actionPrice, st) : p.actionPrice)}</span>` : ''}${o.items.some(x => x.code === p.code) ? '<span class="tag blue">v nabídce</span>' : ''}${p.variant ? `<div class="v">${highlight(p.variant, q)}</div>` : ''}</div>
+      <div class="p">${M(o.currency === 'EUR' ? czkToEur(p.priceVat, st) : p.priceVat)} ${CUR}</div></div>`).join('') : `<div class="empty">${S.products ? 'Nic nenalezeno — zkus kratší dotaz nebo zaškrtni „i skryté“' : 'Načítám produkty…'}</div>`; },
     pick: addItem,
   });
   $('#phid').onchange = () => ps.rerun();
@@ -2005,7 +2021,7 @@ async function renderEditor(id) {
       const t = Calc.totals(o, step);
       const row = {
         customer: o.customer, recipient: o.recipient, items: o.items, note: o.note, terms: o.terms, shoptet_order: o.shoptetOrder,
-        date: o.date || null, valid_until: o.validUntil || null, issued_by: o.issuedBy, net: t.net, total: t.total,
+        date: o.date || null, valid_until: o.validUntil || null, issued_by: o.issuedBy, net: t.net, total: t.total, currency: o.currency,
       };
       try {
         const r = check(await sb.from('offers').update(row).eq('id', o.id).eq('version', o.version).select('version,updated_at,last_edit_by').maybeSingle());
@@ -2074,6 +2090,7 @@ async function renderEditor(id) {
   // --- překlopení nabídky do objednávky ve Shoptetu ---
   function drawToShoptet() {
     const box = $('#toShoptetBox');
+    if (o.currency === 'EUR') { box.innerHTML = '<div class="muted small">Nabídka v EUR — překlopení do Shoptetu zatím není (slovenský e-shop). Položky můžeš zkopírovat tlačítkem níž.</div>'; return; }
     box.innerHTML = o.shoptetOrder && o.status === 'confirmed'
       ? `<div class="sh-linked"><span class="mg ok">Objednávka ve Shoptetu</span> <b class="num-t">${esc(o.shoptetOrder)}</b></div>`
       : `<button class="btn primary" id="toShoptet" style="width:100%" title="Založí ve Shoptetu objednávku z této nabídky">🛒 Překlopit do Shoptetu</button>`;
@@ -2207,6 +2224,25 @@ async function renderEditor(id) {
     } catch (err) { toast(err.message, true); }
   };
 
+  // --- měna nabídky (Kč / EUR) ---
+  $('#curSegO').onclick = async e => {
+    const b = e.target.closest('button'); if (!b || b.dataset.c === o.currency) return; const to = b.dataset.c;
+    if (o.items.length && !(await confirmBox(`Změnit měnu na ${to === 'EUR' ? 'EUR' : 'Kč'}?`, `Ceny ${o.items.length} položek se přepočtou kurzem ${numStr(offRate(st))} Kč/€ a sazby DPH se změní (${to === 'EUR' ? '21 → 23 %, 12 → 19 %' : '23 → 21 %, 19 a 5 → 12 %'}). Ceny pak zkontroluj.`, { ok: 'Změnit a přepočítat' }))) return;
+    const rate = offRate(st);
+    for (const it of o.items) {
+      const vat = Number(it.vatRate) || 0; const nvat = to === 'EUR' ? (VAT_CZ_TO_SK[vat] ?? 23) : (VAT_SK_TO_CZ[vat] ?? 21);
+      const net = Number(it.priceVat || 0) / (1 + vat / 100);
+      let np = Calc.r2((to === 'EUR' ? net / rate : net * rate) * (1 + nvat / 100)); if (to === 'CZK' && Math.abs(np - Math.round(np)) < 0.05) np = Math.round(np); // 429 → 18,02 € → zase 429, ne 428,99
+      it.priceVat = np; it.vatRate = nvat;
+    }
+    o.currency = to; CUR = offSym(o); step = offStep(o, st);
+    if (to === 'EUR' && (!o.customer.country || o.customer.country === 'Česká republika')) { o.customer.country = 'Slovensko'; const ci = $('[data-c="country"]'); if (ci) ci.value = 'Slovensko'; }
+    if (to === 'CZK' && o.customer.country === 'Slovensko') { o.customer.country = 'Česká republika'; const ci = $('[data-c="country"]'); if (ci) ci.value = 'Česká republika'; }
+    $$('#curSegO button').forEach(x => x.classList.toggle('on', x === b));
+    $('#curHint').textContent = to === 'EUR' ? `EUR: DPH ${offVatDefault(o, st)} %, ceny z CZ e-shopu se přepočítají kurzem ${numStr(offRate(st))} Kč/€ — uprav je podle slovenského e-shopu.` : '';
+    drawItems(); drawToShoptet(); markDirty(); toast(`Měna nabídky: ${to === 'EUR' ? 'EUR' : 'Kč'}`);
+  };
+
   drawItems(); drawComments(); drawHistory();
   if (!o.items.length && !c.name && !c.company) $('#cq').focus();
 }
@@ -2235,6 +2271,8 @@ async function renderSettings() {
       ${inp('validDays', 'Platnost nabídky (dní)', s.validDays, '', 'number', 'min="1"')}
       ${inp('defaultDiscount', 'Výchozí sleva na položky (%)', s.defaultDiscount, '', 'number', 'step="0.5"')}
       ${inp('defaultVat', 'Výchozí sazba DPH (%)', s.defaultVat, '', 'number')}
+      ${inp('defaultVatEur', 'Nabídky v EUR: výchozí sazba DPH (%) — Slovensko', s.defaultVatEur ?? 23, '', 'number')}
+      ${inp('eurRate', 'Nabídky v EUR: kurz pro přepočet cen z CZ e-shopu (Kč za 1 €)', s.eurRate ?? 24.2, '', 'number', 'step="0.0001" min="1"')}
       <div><label>Zaokrouhlení jedn. ceny bez DPH</label><select name="priceStep">
         <option value="0.1" ${s.priceStep == 0.1 ? 'selected' : ''}>na 0,10 Kč (jako Pohoda — 429 → 354,60)</option>
         <option value="0.01" ${s.priceStep == 0.01 ? 'selected' : ''}>na haléře (429 → 354,55)</option>
@@ -2284,6 +2322,7 @@ async function renderSettings() {
       ${inp('s.email', 'E-mail', sup.email)}
       ${inp('s.web', 'Web', sup.web)}
       ${inp('s.bank', 'Bankovní účet (nepovinné)', sup.bank, 'full')}
+      ${inp('s.bankEur', 'Účet / IBAN pro nabídky v EUR (nepovinné, jinak se použije účet výše)', sup.bankEur || '', 'full')}
     </div></section>
     <div><button class="btn primary lg">Uložit nastavení</button></div>
   </form>`;
@@ -2338,7 +2377,7 @@ async function renderSettings() {
     const f = new FormData(e.target);
     const fresh = (await loadSettings()).data; // ať nepřepíšeme číslo řady, které mezitím někdo použil
     const data = { ...fresh, supplier: { ...(fresh.supplier || {}) } };
-    const nums = ['numberDigits', 'nextNumber', 'validDays', 'defaultDiscount', 'defaultVat', 'priceStep', 'stockRate', 'stockRateUsd', 'ojDueDays', 'ojDueWarn', 'stockTransportPct', 'marginWarn', 'marginBad', 'shoptetStockId'];
+    const nums = ['numberDigits', 'nextNumber', 'validDays', 'defaultDiscount', 'defaultVat', 'defaultVatEur', 'eurRate', 'priceStep', 'stockRate', 'stockRateUsd', 'ojDueDays', 'ojDueWarn', 'stockTransportPct', 'marginWarn', 'marginBad', 'shoptetStockId'];
     for (const [k, v] of f) {
       if (k.startsWith('s.')) data.supplier[k.slice(2)] = v;
       else data[k] = nums.includes(k) ? Number(v) : v;
@@ -4950,8 +4989,8 @@ function visitForm(el, v, onSave, { compact = false, keepDate = '' } = {}) {
   // číslo nabídky z Vinylor Hubu → doplní hodnotu
   $('[name="doc_ref"]', form).addEventListener('input', e => {
     const t = e.target.value.trim(); const o = t && S.offers.find(x => x.number === t);
-    $('#docHint', form).textContent = o ? `nabídka ${o.number}: ${custLabel(o.customer)} · ${M(o.total)} Kč` : '';
-    if (o && !toNum($('[name="order_value"]', form).value)) { const i = $('[name="order_value"]', form); i.value = numStr(o.total); i.classList.remove('filled'); void i.offsetWidth; i.classList.add('filled'); }
+    $('#docHint', form).textContent = o ? `nabídka ${o.number}: ${custLabel(o.customer)} · ${offMoney(o.total, o)}` : '';
+    if (o && o.currency !== 'EUR' && !toNum($('[name="order_value"]', form).value)) { const i = $('[name="order_value"]', form); i.value = numStr(o.total); i.classList.remove('filled'); void i.offsetWidth; i.classList.add('filled'); }
     highlightValue();
   });
   $('[name="order_value"]', form).addEventListener('input', highlightValue);
