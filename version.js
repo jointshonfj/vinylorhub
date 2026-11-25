@@ -1,10 +1,11 @@
 // Vinylor Hub — verze aplikace. Při KAŽDÉM vydání: zvýšit číslo, přidat záznam do CHANGELOG
 // a stejné číslo dát do ?v=… v index.html (kvůli mezipaměti prohlížeče).
 // Číslování: 0.x = beta (před ostrým provozem s Shoptetem). Až bude vše napojené a ověřené, vyjde 1.0.0.
-export const APP_VERSION = '0.37.1';
+export const APP_VERSION = '0.38.0';
 export const APP_CHANNEL = 'beta';       // 'beta' | 'rc' | '' (ostrá verze)
 export const APP_BUILD = '2026-11-25';
 export const CHANGELOG = [
+  { v: '0.38.0', d: '2026-11-25', t: ['Kontejnery: stačí číslo kontejneru — když ho vybraný rejdař nezná, Hub sám zkouší další', 'Kontejnery: čekající sledování se kontroluje samo každých 10 minut (dřív až za 3 hodiny)', 'Kontejnery: rejdař se vybírá ze seznamu podle jména; pole Přepravce je jen popisek', 'Oprava: do pole B/L se už nezapisuje číslo kontejneru'] },
   { v: '0.37.1', d: '2026-11-25', t: ['Kontejnery, oprava: po neúspěšném sledování se Hub už nezasekne na starém požadavku — „Zkusit znovu“ i změna rejdaře založí nový', 'Kontejnery: sledovat jde nově i podle hlavního B/L nebo čísla bookingu („Změnit zadání“), s vysvětlením, proč se nic nenašlo'] },
   { v: '0.37.0', d: '2026-11-23', t: ['Role a přístupy: správce (Filip Fenyk) v nové stránce „Správa uživatelů“ přidává uživatele, mění role a individuálně zapíná / vypíná přístup do každé části Hubu', 'Vypnuté části má uživatel v menu se zámkem 🔒; po kliknutí se mu napíše, že nemá přístup, a ukáže se kontakt na správce', 'Přístupy hlídá i databáze a servery (ne jen vzhled), změna se projeví do minuty bez nového přihlášení', 'Deník činnosti: kdo co vytvořil, upravil, smazal, kterou část otevřel a kam zkusil vstoupit bez přístupu; filtry podle uživatele, části, druhu akce a období', 'Přehled ukazuje jen karty z částí, do kterých má uživatel přístup'] },
   { v: '0.36.2', d: '2026-11-23', t: ['Rozvozy: přidán stav „Poslání platebních údajů“'] },

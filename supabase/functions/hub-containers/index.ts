@@ -3,7 +3,7 @@
 //   { action: 'ct_check',    containerId, stockId }                 → kontrola před naskladněním (nic nezapisuje), vrací podpis kontroly
 //   { action: 'ct_track', containerId, scac?, ref? }              → ref = { type: container|bill_of_lading|booking_number, number }
 //                                                                   → sledování kontejneru přes Terminal49 (klíč TERMINAL49_API_KEY v Supabase Secrets)
-//   { action: 'ct_track_all' }                                     → plánovač (anon): obnoví sledované kontejnery, nejvýš jednou za ~3 h
+//   { action: 'ct_track_all' }                                     → plánovač (anon): obnoví sledované kontejnery, nejvýš jednou za ~3 h (čekající za ~10 min)
 //   { action: 'ct_stock_in', containerId, stockId, sig, confirm }   → naskladnění; jen s platným podpisem a opsaným číslem kontejneru
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
@@ -48,6 +48,12 @@ const FAIL_WHY: Record<string, string> = {
   retries_exhausted: 'rejdař ani po opakovaných pokusech nevrátil data', expired: 'rejdař do 7 dnů nevrátil data',
   internal_processing_error: 'chyba na straně Terminal49',
 };
+// pořadí, ve kterém Hub sám zkouší rejdaře, když ten zadaný číslo kontejneru nezná
+const CARRIERS = ['CMDU', 'MSCU', 'MAEU', 'HLCU', 'ONEY', 'EGLV', 'COSU', 'OOLU', 'YMLU', 'HDMU', 'ZIMU'];
+const CARRIER_NAME: Record<string, string> = { CMDU: 'CMA CGM', MSCU: 'MSC', MAEU: 'Maersk', HLCU: 'Hapag-Lloyd', ONEY: 'ONE', EGLV: 'Evergreen', COSU: 'COSCO', OOLU: 'OOCL', YMLU: 'Yang Ming', HDMU: 'HMM', ZIMU: 'ZIM' };
+const cname = (s: string) => CARRIER_NAME[s] || s;
+const NEXT_ON = ['not_found', 'invalid_number', 'retries_exhausted', 'expired'];
+const STALE_MS = 24 * 3600_000; // rejdař, který den nic nepošle, se přeskočí
 const isRealId = (id: unknown) => !!id && id !== 'dup' && id !== 'existing';
 
 // Sleduje jeden kontejner. Vrací { ok, pending?, needScac?, candidates?, canRetry?, message? } a zapisuje výsledek do ct_containers.
@@ -69,18 +75,19 @@ async function trackOne(sb: any, key: string, c: any, opts: { manual?: boolean; 
   const retry = !!opts.manual && tr.status === 'failed';
   if (changed || retry) {
     // starý (neúspěšný nebo jinak zadaný) požadavek zahodíme, jinak by se Hub ptal pořád jen na něj
-    for (const k of ['tr_id', 'status', 'failed_reason', 'last_error', 'last_error_at']) delete tr[k];
+    for (const k of ['tr_id', 'status', 'failed_reason', 'last_error', 'last_error_at', 'tried']) delete tr[k];
     if (changed) for (const k of ['t49_container_id', 'shipment_id', 'events', 'position', 'map', 'state', 'terminal', 'voyage', 'arrived_at', 'discharged_at', 'available']) delete tr[k];
   }
 
-  // 1) rejdař (SCAC)
+  // 1) rejdař (SCAC) — u čísla kontejneru si ho Hub najde sám
+  if (!scac && !changed && !retry && tr.tr_id && prev?.scac) scac = prev.scac;
   if (!scac) {
     const inf = await t49(key, 'POST', '/tracking_requests/infer_number', { number: reqNumber }, 'application/json');
-    if (inf.status !== 200 && inf.status !== 201) return { ok: false, message: 'Rejdaře se nepodařilo odhadnout: ' + t49err(inf) };
-    const sl = inf.json?.data?.attributes?.shipping_line;
+    const sl = inf.status === 200 || inf.status === 201 ? inf.json?.data?.attributes?.shipping_line : null;
     if (sl?.decision === 'auto_select' && sl.selected?.scac) scac = sl.selected.scac;
+    else if (reqType === 'container') scac = sl?.candidates?.[0]?.scac || CARRIERS[0];
     else if (sl?.candidates?.length) return { ok: false, needScac: true, candidates: sl.candidates.map((x: any) => ({ scac: x.scac, name: x.name })) };
-    else return { ok: false, needScac: true, candidates: [], message: 'Rejdaře se nepodařilo poznat — zadej jeho SCAC kód (např. MSCU, MAEU, CMDU, HLCU, ONEY, EGLV).' };
+    else return { ok: false, needScac: true, candidates: [], message: 'U B/L a bookingu je potřeba vybrat rejdaře.' };
   }
   tr.scac = scac;
 
@@ -96,24 +103,52 @@ async function trackOne(sb: any, key: string, c: any, opts: { manual?: boolean; 
   let f: any = await findC();
   if (f.err) return { ok: false, message: f.err };
   if (!f.d) {
+    const auto = reqType === 'container';
+    const nextCarrier = () => {
+      tr.tried = [...new Set([...(tr.tried || []), scac])];
+      return CARRIERS.find(x => !tr.tried.includes(x)) || null;
+    };
+    if (tr.tr_id) {
+      if (isRealId(tr.tr_id)) {
+        const st = await t49(key, 'GET', `/tracking_requests/${tr.tr_id}`);
+        const a = st.json?.data?.attributes;
+        if (a) { tr.status = a.status; tr.failed_reason = a.failed_reason ?? null; }
+      }
+      const dead = tr.status === 'failed' && NEXT_ON.includes(tr.failed_reason);
+      const stale = tr.status === 'pending' && !!tr.req?.at && Date.now() - Date.parse(tr.req.at) > STALE_MS;
+      if (auto && (dead || stale)) {
+        const nx = nextCarrier();
+        if (nx) { scac = nx; tr.scac = nx; for (const k of ['tr_id', 'status', 'failed_reason']) delete tr[k]; }
+      }
+    }
     if (!tr.tr_id) {
-      const cr = await t49(key, 'POST', '/tracking_requests', { data: { type: 'tracking_request', attributes: { request_type: reqType, request_number: reqNumber, scac } } });
-      if (cr.status === 401 || cr.status === 403) return { ok: false, message: 'Terminal49 odmítl klíč (' + t49err(cr) + ').' };
-      if (cr.status === 201 || cr.status === 200) { tr.tr_id = cr.json?.data?.id ?? null; tr.status = cr.json?.data?.attributes?.status ?? 'pending'; }
-      else if (cr.json?.errors?.[0]?.code === 'duplicate') { tr.tr_id = cr.json.errors[0]?.meta?.tracking_request_id || 'dup'; tr.status = 'pending'; }
-      else return { ok: false, canRetry: true, message: 'Sledování se nepodařilo založit: ' + t49err(cr) };
+      for (;;) {
+        const cr = await t49(key, 'POST', '/tracking_requests', { data: { type: 'tracking_request', attributes: { request_type: reqType, request_number: reqNumber, scac } } });
+        if (cr.status === 401 || cr.status === 403) return { ok: false, message: 'Terminal49 odmítl klíč (' + t49err(cr) + ').' };
+        if (cr.status === 201 || cr.status === 200) { tr.tr_id = cr.json?.data?.id ?? null; tr.status = cr.json?.data?.attributes?.status ?? 'pending'; }
+        else if (cr.json?.errors?.[0]?.code === 'duplicate') { tr.tr_id = cr.json.errors[0]?.meta?.tracking_request_id || 'dup'; tr.status = 'pending'; }
+        else {
+          // rejdaře, kterého Terminal49 pro číslo kontejneru neumí, přeskočíme
+          const nx = auto && cr.status === 422 ? nextCarrier() : null;
+          if (nx) { scac = nx; tr.scac = nx; continue; }
+          return { ok: false, canRetry: true, message: 'Sledování se nepodařilo založit: ' + t49err(cr) };
+        }
+        break;
+      }
+      delete tr.failed_reason;
       tr.req = { type: reqType, number: reqNumber, scac, at: new Date().toISOString() };
       await sleep(1500); f = await findC();
       if (f.err) return { ok: false, message: f.err };
-    } else if (isRealId(tr.tr_id)) {
-      const st = await t49(key, 'GET', `/tracking_requests/${tr.tr_id}`);
-      const a = st.json?.data?.attributes;
-      if (a) { tr.status = a.status; tr.failed_reason = a.failed_reason ?? null; }
     }
     if (!f.d) {
       tr.fetched_at = new Date().toISOString();
       await sb.from('ct_containers').update({ scac, tracking: tr, tracked_at: tr.fetched_at }).eq('id', c.id);
-      const by = `podle ${REF_TYPES[reqType]} ${reqNumber}, rejdař ${scac}`;
+      const by = `podle ${REF_TYPES[reqType]} ${reqNumber}, rejdař ${cname(scac)}`;
+      const ruled = (tr.tried || []).filter((x: string) => x !== scac).map(cname);
+      if (tr.status === 'failed' && reqType === 'container' && NEXT_ON.includes(tr.failed_reason)) {
+        if (CARRIERS.some(x => x !== scac && !(tr.tried || []).includes(x))) return { ok: true, pending: true, message: `${cname(scac)} tohle číslo nezná. Hub do 10 minut sám zkusí dalšího rejdaře.` };
+        return { ok: false, canRetry: true, message: `Kontejner ${number} nezná žádný z rejdařů, které Hub zkusil (${[...new Set([...(tr.tried || []), scac])].map(cname).join(', ')}). Zkontroluj číslo kontejneru, nebo ho sleduj podle hlavního B/L.` };
+      }
       if (tr.status === 'failed') return { ok: false, canRetry: true, message: `Terminal49 nic nenašel (${by}): ${FAIL_WHY[tr.failed_reason] || tr.failed_reason || 'neznámý důvod'}. Zkontroluj rejdaře, nebo zkus sledovat podle hlavního B/L či bookingu.` };
       if (tr.status === 'created' && isRealId(tr.tr_id) && reqType !== 'container') {
         // zásilka se našla, ale naše číslo kontejneru v ní není
@@ -125,7 +160,7 @@ async function trackOne(sb: any, key: string, c: any, opts: { manual?: boolean; 
           if (nums.length) return { ok: false, canRetry: true, message: `Zásilka se našla (${by}), ale kontejner ${number} v ní není. Jsou v ní: ${nums.slice(0, 12).join(', ')}.` };
         }
       }
-      return { ok: true, pending: true, message: `Požadavek je založený (${by}). Terminal49 čeká na data od rejdaře — obvykle pár minut, ale zkouší to až 7 dní. Když to trvá dlouho, zkus „Změnit zadání“.` };
+      return { ok: true, pending: true, message: `Hledám (${by})${ruled.length ? '; už vyloučeno: ' + ruled.join(', ') : ''}. Nemusíš na nic klikat, Hub to sám kontroluje každých 10 minut.` };
     }
   }
   const a = f.d.attributes || {};
@@ -195,7 +230,9 @@ async function trackOne(sb: any, key: string, c: any, opts: { manual?: boolean; 
   setIf('imo', pick(s, 'pod_vessel_imo', 'pol_vessel_imo', 'vessel_imo'));
   setIf('pol', pick(s, 'port_of_lading_name', 'pol_name')); setIf('pod', pick(s, 'port_of_discharge_name', 'pod_name'));
   tr.pol_locode = pick(s, 'port_of_lading_locode'); tr.pod_locode = pick(s, 'port_of_discharge_locode'); tr.voyage = pick(s, 'pod_voyage_number'); tr.eta_original = day(pick(s, 'pod_original_eta_at'));
-  setIf('bl', pick(s, 'bill_of_lading_number', 'bl_number')); setIf('carrier', pick(s, 'shipping_line_name') ?? pick(a, 'shipping_line_name'));
+  const blNo = pick(s, 'bill_of_lading_number', 'bl_number');
+  if (blNo && norm(blNo) !== number) setIf('bl', blNo); // při sledování podle kontejneru vrací Terminal49 jako B/L číslo kontejneru
+  setIf('carrier', pick(s, 'shipping_line_name') ?? pick(a, 'shipping_line_name'));
   if (lat !== null && lon !== null && Number.isFinite(lat) && Number.isFinite(lon)) { upd.last_lat = lat; upd.last_lon = lon; }
   const derived = (ata || tr.arrived_at || tr.discharged_at) ? 'port' : (pick(s, 'pol_atd_at') || tr.position) ? 'sailing' : null;
   if (derived && (RANK[derived] ?? 0) > (RANK[c.status] ?? 0)) upd.status = derived;
@@ -210,15 +247,19 @@ Deno.serve(async (req) => {
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
     const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
     const b = await req.json().catch(() => ({}));
-    // plánovač (veřejný anon klíč): obnoví už zapnuté sledování, nejvýš jednou za ~3 h na kontejner
+    // plánovač (veřejný anon klíč, běží po 10 min): sledované obnoví jednou za ~3 h, čekající za ~10 min
     if (b.action === 'ct_track_all') {
       if (claims(jwt).role !== 'anon') return json({ error: 'Jen pro plánovač.' }, 403);
       const key = Deno.env.get('TERMINAL49_API_KEY');
       if (!key) return json({ ok: false, error: 'Chybí TERMINAL49_API_KEY.' });
-      const { data: rows } = await sb.from('ct_containers').select('*').eq('archived', false).neq('status', 'delivered').not('tracking', 'is', null).limit(40);
-      const cutoff = Date.now() - 170 * 60_000; let n = 0, fails = 0;
+      const { data: rows } = await sb.from('ct_containers').select('*').eq('archived', false).neq('status', 'delivered').not('tracking', 'is', null).order('tracked_at', { ascending: true, nullsFirst: true }).limit(40);
+      let n = 0, fails = 0;
       for (const c of rows || []) {
-        if (!c.tracking?.tr_id || c.tracking.status === 'failed' || (c.tracked_at && Date.parse(c.tracked_at) > cutoff)) continue;
+        const st = c.tracking?.status;
+        // čekající na data: po ~10 min; už sledované: po ~3 h. Neúspěch bez dalšího rejdaře se neopakuje.
+        const wait = (st === 'created' ? 170 : 8) * 60_000;
+        const spent = st === 'failed' && !(c.tracking?.req?.type === 'container' && NEXT_ON.includes(c.tracking?.failed_reason) && CARRIERS.some(x => x !== c.scac && !(c.tracking.tried || []).includes(x)));
+        if (!c.tracking?.tr_id || spent || (c.tracked_at && Date.parse(c.tracked_at) > Date.now() - wait)) continue;
         try { const r: any = await trackOne(sb, key, c); n++; if (!r.ok) fails++; } catch { fails++; }
         await sleep(400);
       }

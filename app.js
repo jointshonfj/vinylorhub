@@ -4631,6 +4631,9 @@ function drawCt() {
   $$('tr.click, .ct-card', $('#main')).forEach(r => { r.onclick = () => { location.hash = '#/k/' + r.dataset.c; }; r.onkeydown = e => { if (e.key === 'Enter') location.hash = '#/k/' + r.dataset.c; }; });
 }
 
+const CT_CARRIERS = [['CMDU', 'CMA CGM'], ['MSCU', 'MSC'], ['MAEU', 'Maersk'], ['HLCU', 'Hapag-Lloyd'], ['ONEY', 'ONE'], ['EGLV', 'Evergreen'], ['COSU', 'COSCO'], ['OOLU', 'OOCL'], ['YMLU', 'Yang Ming'], ['HDMU', 'HMM'], ['ZIMU', 'ZIM']];
+const ctCarrierName = s => (CT_CARRIERS.find(x => x[0] === s) || [s, s])[1];
+const ctCarrierOpts = cur => [['', 'Automaticky — Hub rejdaře najde sám'], ...CT_CARRIERS, ...(cur && !CT_CARRIERS.some(x => x[0] === cur) ? [[cur, cur]] : [])].map(([k, l]) => `<option value="${esc(k)}" ${k === (cur || '') ? 'selected' : ''}>${esc(l)}</option>`).join('');
 async function ctCall(body) {
   const { data, error } = await sb.functions.invoke('hub-containers', { body });
   if (error) {
@@ -4757,14 +4760,14 @@ async function renderContainer(id) {
   // ---------- sledování (Terminal49) ----------
   function trackPanel() {
     const c = cur(); const t = c.tracking || {}; const on = !!(t.tr_id || t.t49_container_id);
-    if (!on) return c.status === 'delivered' ? '' : `<div class="panel panel-b ct-sec ct-track"><div style="flex:1;min-width:220px"><b>📡 Sledování v reálném čase</b><div class="small muted">Napojení na Terminal49: stav, loď, ETA a (s doplňkovou licencí) poloha lodi. Po zapnutí se obnovuje samo zhruba každé 3 hodiny.</div></div><button class="btn" id="tkEdit">Podle B/L / bookingu…</button><button class="btn primary" id="tkStart">Spustit sledování</button>${t.last_error ? `<div class="small warn-t" style="flex-basis:100%">${esc(t.last_error)}</div>` : ''}</div>`;
+    if (!on) return c.status === 'delivered' ? '' : `<div class="panel panel-b ct-sec ct-track"><div style="flex:1;min-width:220px"><b>📡 Sledování v reálném čase</b><div class="small muted">Napojení na Terminal49: stav, loď, ETA a poloha lodi. Stačí číslo kontejneru, rejdaře Hub najde sám. Data se pak obnovují automaticky zhruba každé 3 hodiny.</div></div><button class="btn" id="tkEdit">Podle B/L / bookingu…</button><button class="btn primary" id="tkStart">Spustit sledování</button>${t.last_error ? `<div class="small warn-t" style="flex-basis:100%">${esc(t.last_error)}</div>` : ''}</div>`;
     const pos = t.position; const port = ctPort(c.pod);
     const km = pos && port ? kmBetween(pos.lat, pos.lon, port.lat, port.lon) : null;
     const ev = (t.events || []).slice(0, 8);
     return `<div class="panel ct-sec"><div class="panel-h">📡 Sledování <span class="sub">Terminal49${c.tracked_at ? ' · aktualizováno ' + czDateTime(c.tracked_at) : ''}</span><span class="grow"></span><button class="btn sm" id="tkEdit">✎ Změnit zadání</button> <button class="btn sm" id="tkRefresh">${t.status === 'failed' ? '↻ Zkusit znovu' : '↻ Obnovit teď'}</button></div>
       <div class="panel-b" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
-        <div class="ct-kv"><span>Stav u Terminal49</span><b>${t.status && t.status !== 'created' ? (t.status === 'failed' ? 'sledování selhalo' : 'čekáme na data od rejdaře') : esc(CT_TSTATE[t.state] || t.state || 'sledováno')}</b></div>
-        ${t.req ? `<div class="ct-kv"><span>Sleduje se podle</span><b>${t.req.type === 'bill_of_lading' ? 'B/L' : t.req.type === 'booking_number' ? 'bookingu' : 'kontejneru'} ${esc(t.req.number)}</b><small class="muted">rejdař ${esc(t.scac || t.req.scac || '?')}</small></div>` : ''}
+        <div class="ct-kv"><span>Stav u Terminal49</span><b>${t.status && t.status !== 'created' ? (t.status === 'failed' ? 'sledování selhalo' : 'hledáme u rejdaře ' + esc(ctCarrierName(t.scac || ''))) : esc(CT_TSTATE[t.state] || t.state || 'sledováno')}</b></div>
+        ${t.req ? `<div class="ct-kv"><span>Sleduje se podle</span><b>${t.req.type === 'bill_of_lading' ? 'B/L' : t.req.type === 'booking_number' ? 'bookingu' : 'kontejneru'} ${esc(t.req.number)}</b><small class="muted">rejdař ${esc(ctCarrierName(t.scac || t.req.scac || '?'))}${t.tried && t.tried.length && t.status !== 'created' ? ' · už vyloučeno: ' + esc(t.tried.filter(x => x !== t.scac).map(ctCarrierName).join(', ') || '—') : ''}</small></div>` : ''}
         ${t.terminal ? `<div class="ct-kv"><span>Terminál</span><b>${esc(t.terminal)}</b></div>` : ''}${t.voyage ? `<div class="ct-kv"><span>Plavba (voyage)</span><b>${esc(t.voyage)}</b></div>` : ''}${t.last_error ? `<div class="small warn-t" style="grid-column:1/-1">Poslední chyba: ${esc(t.last_error)}</div>` : ''}
         ${pos ? `<div class="ct-kv"><span>Poloha lodi${pos.at ? ' (' + czDateTime(pos.at) + ')' : ''}</span><b>${pos.lat.toFixed(2)}°, ${pos.lon.toFixed(2)}° <a href="https://www.openstreetmap.org/?mlat=${pos.lat}&mlon=${pos.lon}#map=5/${pos.lat}/${pos.lon}" target="_blank" rel="noopener noreferrer">mapa</a></b>${pos.speed != null ? `<small class="muted">rychlost ${esc(pos.speed)} uzlů</small>` : ''}</div>
           ${km != null ? `<div class="ct-kv"><span>Do ${esc(c.pod)}</span><b>asi ${km.toLocaleString('cs')} km</b><small class="muted">vzdušnou čarou</small></div>` : ''}`
@@ -4782,9 +4785,8 @@ async function renderContainer(id) {
       body: `${why ? `<p class="small warn-t">${esc(why)}</p>` : ''}
         <label>Sledovat podle</label><select data-ty>${[['container', 'čísla kontejneru'], ['bill_of_lading', 'hlavního B/L (nejspolehlivější)'], ['booking_number', 'čísla bookingu']].map(([k, l]) => `<option value="${k}" ${k === start ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <label data-nl>Číslo</label><input data-no value="${esc(numFor(start))}" style="text-transform:uppercase">
-        <label>Rejdař (SCAC)</label><input data-sc maxlength="4" value="${esc(c.scac || t.scac || '')}" list="ctScacList" style="text-transform:uppercase" placeholder="prázdné = zkusit poznat">
-        <datalist id="ctScacList">${[['MSCU', 'MSC'], ['MAEU', 'Maersk'], ['CMDU', 'CMA CGM'], ['HLCU', 'Hapag-Lloyd'], ['ONEY', 'ONE'], ['EGLV', 'Evergreen'], ['COSU', 'COSCO'], ['OOLU', 'OOCL'], ['YMLU', 'Yang Ming'], ['HDMU', 'HMM'], ['ZIMU', 'ZIM']].map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</datalist>
-        <p class="small muted">Předpona čísla kontejneru neříká, kdo ho veze (kontejnery se pronajímají). Rejdaře a hlavní B/L (MBL) najdeš na konosamentu nebo ti je pošle spedice. <b>House B/L od spedice (např. Kuehne+Nagel) Terminal49 nepřijímá.</b></p>`,
+        <label>Rejdař</label><select data-sc>${ctCarrierOpts(c.scac || t.scac || '')}</select>
+        <p class="small muted">Předpona čísla kontejneru neříká, kdo ho veze (kontejnery se pronajímají). Když sleduješ podle čísla kontejneru a vybraný rejdař ho nezná, Hub sám zkusí další. Hlavní B/L (MBL) najdeš na konosamentu nebo ti ho pošle spedice. <b>House B/L od spedice (např. Kuehne+Nagel) Terminal49 nepřijímá.</b></p>`,
       actions: [{ label: 'Zrušit', value: null }, { label: 'Spustit', cls: 'primary', value: bd => ({ type: $('[data-ty]', bd).value, number: $('[data-no]', bd).value.trim().toUpperCase(), scac: $('[data-sc]', bd).value.trim().toUpperCase() }) }] });
     const dlg = $$('.backdrop').pop(); const ty = $('[data-ty]', dlg), no = $('[data-no]', dlg); // okno je v DOM hned
     const sync = () => { no.readOnly = ty.value === 'container'; $('[data-nl]', dlg).textContent = ty.value === 'container' ? 'Číslo kontejneru (mění se v Úpravách)' : ty.value === 'booking_number' ? 'Číslo bookingu' : 'Číslo hlavního B/L'; };
@@ -4864,7 +4866,7 @@ async function renderContainer(id) {
     return `${hero()}
     <div class="panel panel-b ct-sec"><div class="small" style="margin-bottom:12px">✏️ <b>Režim úprav</b> — změny se ukládají hned. Stav změníš kliknutím na krok nahoře.</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
-      ${fld('number', 'Číslo kontejneru', 'např. MSCU1234567')}${fld('bl', 'B/L (konosament)')}${fld('booking', 'Booking')}${fld('supplier', 'Dodavatel')}${fld('carrier', 'Přepravce (rejdař)', 'např. MSC')}${fld('scac', 'Kód rejdaře (SCAC)', 'MSCU, MAEU… (prázdné = automaticky)')}
+      ${fld('number', 'Číslo kontejneru', 'např. MSCU1234567')}${fld('bl', 'B/L (konosament)')}${fld('booking', 'Booking')}${fld('supplier', 'Dodavatel')}${fld('carrier', 'Přepravce / spedice (jen popisek)', 'např. Kuehne+Nagel')}<div><label>Rejdař pro sledování</label><select data-k="scac">${ctCarrierOpts(c.scac || '')}</select></div>
       ${fld('vessel', 'Loď')}${fld('imo', 'IMO lodi', '7 číslic')}${fld('pol', 'Přístav nalodění')}${fld('pod', 'Přístav vyloďení', 'např. Hamburk')}
       ${fld('etd', 'Odplutí (ETD)', '', 'date')}${fld('eta', 'Příjezd (ETA)', '', 'date')}${fld('ata', 'Skutečný příjezd', '', 'date')}${fld('delivered_at', 'Doručeno k nám', '', 'date')}</div>
       <label style="margin-top:12px">Poznámka</label><input data-k="note" value="${esc(c.note)}"><div style="margin-top:10px">${trackLinks(c)}</div></div>
