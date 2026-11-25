@@ -1,7 +1,8 @@
 // Vinylor Hub · Edge Function „hub-containers“ — kontejnery: naskladnění do Shoptetu ve dvou krocích.
 // Token je v Supabase Secrets (SHOPTET_API_TOKEN). Smí ji volat jen aktivní uživatel s 2FA (AAL2) a právem „kontejnery“.
 //   { action: 'ct_check',    containerId, stockId }                 → kontrola před naskladněním (nic nezapisuje), vrací podpis kontroly
-//   { action: 'ct_track', containerId, force? }                   → sledování kontejneru přes Terminal49 (klíč TERMINAL49_API_KEY v Supabase Secrets)
+//   { action: 'ct_track', containerId, scac?, ref? }              → ref = { type: container|bill_of_lading|booking_number, number }
+//                                                                   → sledování kontejneru přes Terminal49 (klíč TERMINAL49_API_KEY v Supabase Secrets)
 //   { action: 'ct_track_all' }                                     → plánovač (anon): obnoví sledované kontejnery, nejvýš jednou za ~3 h
 //   { action: 'ct_stock_in', containerId, stockId, sig, confirm }   → naskladnění; jen s platným podpisem a opsaným číslem kontejneru
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -41,17 +42,40 @@ async function t49(key: string, method: string, path: string, body?: unknown, ct
 const t49err = (r: { json: any; text: string; status: number }) =>
   (r.json?.errors ? r.json.errors.map((e: any) => e.detail || e.title).filter(Boolean).join('; ') : r.text) || ('HTTP ' + r.status);
 
-// Sleduje jeden kontejner. Vrací { ok, pending?, needScac?, candidates?, message? } a zapisuje výsledek do ct_containers.
-async function trackOne(sb: any, key: string, c: any, force = false) {
+const REF_TYPES: Record<string, string> = { container: 'čísla kontejneru', bill_of_lading: 'B/L', booking_number: 'čísla bookingu' };
+const FAIL_WHY: Record<string, string> = {
+  not_found: 'rejdař tohle číslo nezná', invalid_number: 'rejdař číslo odmítl jako neplatné',
+  retries_exhausted: 'rejdař ani po opakovaných pokusech nevrátil data', expired: 'rejdař do 7 dnů nevrátil data',
+  internal_processing_error: 'chyba na straně Terminal49',
+};
+const isRealId = (id: unknown) => !!id && id !== 'dup' && id !== 'existing';
+
+// Sleduje jeden kontejner. Vrací { ok, pending?, needScac?, candidates?, canRetry?, message? } a zapisuje výsledek do ct_containers.
+// opts.manual = klikl uživatel (po neúspěchu se smí založit nový požadavek); opts.ref = podle čeho sledovat.
+async function trackOne(sb: any, key: string, c: any, opts: { manual?: boolean; ref?: { type?: unknown; number?: unknown } | null } = {}) {
   const number = String(c.number || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!/^[A-Z]{4}\d{7}$/.test(number)) return { ok: false, message: 'Číslo kontejneru musí mít tvar 4 písmena + 7 číslic (např. MSCU1234567).' };
   const tr: any = c.tracking && typeof c.tracking === 'object' ? { ...c.tracking } : {};
   tr.provider = 'terminal49';
   let scac = String(c.scac || tr.scac || '').toUpperCase();
 
+  // podle čeho sledovat: číslo kontejneru (výchozí), hlavní B/L nebo booking
+  const prev = tr.req || (tr.tr_id ? { type: 'container', number, scac: tr.scac } : null);
+  const askType = opts.ref && REF_TYPES[String(opts.ref.type)] ? String(opts.ref.type) : null;
+  const reqType: string = askType || prev?.type || 'container';
+  const reqNumber = reqType === 'container' ? number : norm(askType ? opts.ref!.number : prev?.number).slice(0, 40);
+  if (reqNumber.length < 4) return { ok: false, message: 'Chybí ' + (reqType === 'booking_number' ? 'číslo bookingu.' : 'číslo B/L.') };
+  const changed = !!prev && (prev.type !== reqType || prev.number !== reqNumber || !!(prev.scac && scac && prev.scac !== scac));
+  const retry = !!opts.manual && tr.status === 'failed';
+  if (changed || retry) {
+    // starý (neúspěšný nebo jinak zadaný) požadavek zahodíme, jinak by se Hub ptal pořád jen na něj
+    for (const k of ['tr_id', 'status', 'failed_reason', 'last_error', 'last_error_at']) delete tr[k];
+    if (changed) for (const k of ['t49_container_id', 'shipment_id', 'events', 'position', 'map', 'state', 'terminal', 'voyage', 'arrived_at', 'discharged_at', 'available']) delete tr[k];
+  }
+
   // 1) rejdař (SCAC)
   if (!scac) {
-    const inf = await t49(key, 'POST', '/tracking_requests/infer_number', { number }, 'application/json');
+    const inf = await t49(key, 'POST', '/tracking_requests/infer_number', { number: reqNumber }, 'application/json');
     if (inf.status !== 200 && inf.status !== 201) return { ok: false, message: 'Rejdaře se nepodařilo odhadnout: ' + t49err(inf) };
     const sl = inf.json?.data?.attributes?.shipping_line;
     if (sl?.decision === 'auto_select' && sl.selected?.scac) scac = sl.selected.scac;
@@ -65,21 +89,23 @@ async function trackOne(sb: any, key: string, c: any, force = false) {
     const r = await t49(key, 'GET', `/containers?filter[number]=${number}&include=shipment`);
     if (r.status === 401 || r.status === 403) return { err: 'Terminal49 odmítl klíč (' + t49err(r) + ').' };
     if (r.status !== 200) return { err: t49err(r) };
-    const d = (r.json?.data || []).find((x: any) => String(x.attributes?.number || '').toUpperCase() === number) || (r.json?.data || [])[0];
+    // jen přesná shoda čísla — nikdy nepřebírat data cizího kontejneru
+    const d = (r.json?.data || []).find((x: any) => norm(x.attributes?.number) === number);
     return { d, included: r.json?.included || [] };
   };
   let f: any = await findC();
   if (f.err) return { ok: false, message: f.err };
   if (!f.d) {
     if (!tr.tr_id) {
-      const cr = await t49(key, 'POST', '/tracking_requests', { data: { type: 'tracking_request', attributes: { request_type: 'container', request_number: number, scac } } });
+      const cr = await t49(key, 'POST', '/tracking_requests', { data: { type: 'tracking_request', attributes: { request_type: reqType, request_number: reqNumber, scac } } });
       if (cr.status === 401 || cr.status === 403) return { ok: false, message: 'Terminal49 odmítl klíč (' + t49err(cr) + ').' };
       if (cr.status === 201 || cr.status === 200) { tr.tr_id = cr.json?.data?.id ?? null; tr.status = cr.json?.data?.attributes?.status ?? 'pending'; }
-      else if (cr.json?.errors?.[0]?.code === 'duplicate') { tr.tr_id = tr.tr_id || 'dup'; tr.status = 'pending'; }
-      else return { ok: false, message: 'Sledování se nepodařilo založit: ' + t49err(cr) };
+      else if (cr.json?.errors?.[0]?.code === 'duplicate') { tr.tr_id = cr.json.errors[0]?.meta?.tracking_request_id || 'dup'; tr.status = 'pending'; }
+      else return { ok: false, canRetry: true, message: 'Sledování se nepodařilo založit: ' + t49err(cr) };
+      tr.req = { type: reqType, number: reqNumber, scac, at: new Date().toISOString() };
       await sleep(1500); f = await findC();
       if (f.err) return { ok: false, message: f.err };
-    } else if (tr.tr_id && tr.tr_id !== 'dup' && tr.tr_id !== 'existing') {
+    } else if (isRealId(tr.tr_id)) {
       const st = await t49(key, 'GET', `/tracking_requests/${tr.tr_id}`);
       const a = st.json?.data?.attributes;
       if (a) { tr.status = a.status; tr.failed_reason = a.failed_reason ?? null; }
@@ -87,8 +113,19 @@ async function trackOne(sb: any, key: string, c: any, force = false) {
     if (!f.d) {
       tr.fetched_at = new Date().toISOString();
       await sb.from('ct_containers').update({ scac, tracking: tr, tracked_at: tr.fetched_at }).eq('id', c.id);
-      if (tr.status === 'failed') return { ok: false, message: 'Terminal49 sledování odmítl: ' + (tr.failed_reason || 'neznámý důvod') + (scac === 'COSU' ? ' (COSCO podle jejich dokumentace sledování podle čísla kontejneru nepodporuje — zkus číslo B/L.)' : '') };
-      return { ok: true, pending: true, message: 'Sledování je založené, čekáme na data od rejdaře (obvykle pár minut, někdy hodiny).' };
+      const by = `podle ${REF_TYPES[reqType]} ${reqNumber}, rejdař ${scac}`;
+      if (tr.status === 'failed') return { ok: false, canRetry: true, message: `Terminal49 nic nenašel (${by}): ${FAIL_WHY[tr.failed_reason] || tr.failed_reason || 'neznámý důvod'}. Zkontroluj rejdaře, nebo zkus sledovat podle hlavního B/L či bookingu.` };
+      if (tr.status === 'created' && isRealId(tr.tr_id) && reqType !== 'container') {
+        // zásilka se našla, ale naše číslo kontejneru v ní není
+        const rq = await t49(key, 'GET', `/tracking_requests/${tr.tr_id}?include=tracked_object`);
+        const shipRef = rq.json?.data?.relationships?.tracked_object?.data?.id;
+        if (shipRef) {
+          const sr = await t49(key, 'GET', `/shipments/${shipRef}?include=containers`);
+          const nums = (sr.json?.included || []).filter((x: any) => x.type === 'container').map((x: any) => String(x.attributes?.number || '')).filter(Boolean);
+          if (nums.length) return { ok: false, canRetry: true, message: `Zásilka se našla (${by}), ale kontejner ${number} v ní není. Jsou v ní: ${nums.slice(0, 12).join(', ')}.` };
+        }
+      }
+      return { ok: true, pending: true, message: `Požadavek je založený (${by}). Terminal49 čeká na data od rejdaře — obvykle pár minut, ale zkouší to až 7 dní. Když to trvá dlouho, zkus „Změnit zadání“.` };
     }
   }
   const a = f.d.attributes || {};
@@ -97,6 +134,8 @@ async function trackOne(sb: any, key: string, c: any, force = false) {
   const s = sh?.attributes || {};
   tr.t49_container_id = f.d.id; tr.shipment_id = sh?.id ?? shipId ?? null; tr.status = 'created';
   tr.tr_id = tr.tr_id || 'existing';
+  tr.req = tr.req || { type: reqType, number: reqNumber, scac };
+  delete tr.failed_reason;
   tr.state = pick(a, 'current_status') ; tr.arrived_at = pick(a, 'pod_arrived_at'); tr.discharged_at = pick(a, 'pod_discharged_at');
   tr.available = pick(a, 'available_for_pickup'); tr.terminal = pick(a, 'location_at_pod_terminal');
   tr.debug = { container: Object.keys(a), shipment: Object.keys(s) };
@@ -179,7 +218,7 @@ Deno.serve(async (req) => {
       const { data: rows } = await sb.from('ct_containers').select('*').eq('archived', false).neq('status', 'delivered').not('tracking', 'is', null).limit(40);
       const cutoff = Date.now() - 170 * 60_000; let n = 0, fails = 0;
       for (const c of rows || []) {
-        if (!c.tracking?.tr_id || (c.tracked_at && Date.parse(c.tracked_at) > cutoff)) continue;
+        if (!c.tracking?.tr_id || c.tracking.status === 'failed' || (c.tracked_at && Date.parse(c.tracked_at) > cutoff)) continue;
         try { const r: any = await trackOne(sb, key, c); n++; if (!r.ok) fails++; } catch { fails++; }
         await sleep(400);
       }
@@ -210,7 +249,7 @@ Deno.serve(async (req) => {
       const { data: c } = await sb.from('ct_containers').select('*').eq('id', cid).maybeSingle();
       if (!c) return json({ error: 'Kontejner nenalezen.' }, 404);
       if (b.scac) { const sc = String(b.scac).toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); if (sc.length >= 2) { c.scac = sc; await sb.from('ct_containers').update({ scac: sc }).eq('id', cid); } }
-      const r = await trackOne(sb, key, c, !!b.force);
+      const r = await trackOne(sb, key, c, { manual: true, ref: b.ref && typeof b.ref === 'object' ? b.ref : null });
       // poslední chybu uložíme ke kontejneru (kvůli diagnostice), při úspěchu ji smažeme
       const { data: fresh } = await sb.from('ct_containers').select('tracking').eq('id', cid).single();
       const tr0 = fresh?.tracking && typeof fresh.tracking === 'object' ? { ...fresh.tracking } : {};

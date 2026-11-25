@@ -4757,13 +4757,14 @@ async function renderContainer(id) {
   // ---------- sledování (Terminal49) ----------
   function trackPanel() {
     const c = cur(); const t = c.tracking || {}; const on = !!(t.tr_id || t.t49_container_id);
-    if (!on) return c.status === 'delivered' ? '' : `<div class="panel panel-b ct-sec ct-track"><div style="flex:1;min-width:220px"><b>📡 Sledování v reálném čase</b><div class="small muted">Napojení na Terminal49: stav, loď, ETA a (s doplňkovou licencí) poloha lodi. Po zapnutí se obnovuje samo zhruba každé 3 hodiny.</div></div><button class="btn primary" id="tkStart">Spustit sledování</button></div>`;
+    if (!on) return c.status === 'delivered' ? '' : `<div class="panel panel-b ct-sec ct-track"><div style="flex:1;min-width:220px"><b>📡 Sledování v reálném čase</b><div class="small muted">Napojení na Terminal49: stav, loď, ETA a (s doplňkovou licencí) poloha lodi. Po zapnutí se obnovuje samo zhruba každé 3 hodiny.</div></div><button class="btn" id="tkEdit">Podle B/L / bookingu…</button><button class="btn primary" id="tkStart">Spustit sledování</button>${t.last_error ? `<div class="small warn-t" style="flex-basis:100%">${esc(t.last_error)}</div>` : ''}</div>`;
     const pos = t.position; const port = ctPort(c.pod);
     const km = pos && port ? kmBetween(pos.lat, pos.lon, port.lat, port.lon) : null;
     const ev = (t.events || []).slice(0, 8);
-    return `<div class="panel ct-sec"><div class="panel-h">📡 Sledování <span class="sub">Terminal49${c.tracked_at ? ' · aktualizováno ' + czDateTime(c.tracked_at) : ''}</span><span class="grow"></span><button class="btn sm" id="tkRefresh">↻ Obnovit teď</button></div>
+    return `<div class="panel ct-sec"><div class="panel-h">📡 Sledování <span class="sub">Terminal49${c.tracked_at ? ' · aktualizováno ' + czDateTime(c.tracked_at) : ''}</span><span class="grow"></span><button class="btn sm" id="tkEdit">✎ Změnit zadání</button> <button class="btn sm" id="tkRefresh">${t.status === 'failed' ? '↻ Zkusit znovu' : '↻ Obnovit teď'}</button></div>
       <div class="panel-b" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
-        <div class="ct-kv"><span>Stav u Terminal49</span><b>${t.status && t.status !== 'created' ? (t.status === 'failed' ? 'sledování selhalo: ' + esc(t.failed_reason || '') : 'čekáme na data od rejdaře') : esc(CT_TSTATE[t.state] || t.state || 'sledováno')}</b></div>
+        <div class="ct-kv"><span>Stav u Terminal49</span><b>${t.status && t.status !== 'created' ? (t.status === 'failed' ? 'sledování selhalo' : 'čekáme na data od rejdaře') : esc(CT_TSTATE[t.state] || t.state || 'sledováno')}</b></div>
+        ${t.req ? `<div class="ct-kv"><span>Sleduje se podle</span><b>${t.req.type === 'bill_of_lading' ? 'B/L' : t.req.type === 'booking_number' ? 'bookingu' : 'kontejneru'} ${esc(t.req.number)}</b><small class="muted">rejdař ${esc(t.scac || t.req.scac || '?')}</small></div>` : ''}
         ${t.terminal ? `<div class="ct-kv"><span>Terminál</span><b>${esc(t.terminal)}</b></div>` : ''}${t.voyage ? `<div class="ct-kv"><span>Plavba (voyage)</span><b>${esc(t.voyage)}</b></div>` : ''}${t.last_error ? `<div class="small warn-t" style="grid-column:1/-1">Poslední chyba: ${esc(t.last_error)}</div>` : ''}
         ${pos ? `<div class="ct-kv"><span>Poloha lodi${pos.at ? ' (' + czDateTime(pos.at) + ')' : ''}</span><b>${pos.lat.toFixed(2)}°, ${pos.lon.toFixed(2)}° <a href="https://www.openstreetmap.org/?mlat=${pos.lat}&mlon=${pos.lon}#map=5/${pos.lat}/${pos.lon}" target="_blank" rel="noopener noreferrer">mapa</a></b>${pos.speed != null ? `<small class="muted">rychlost ${esc(pos.speed)} uzlů</small>` : ''}</div>
           ${km != null ? `<div class="ct-kv"><span>Do ${esc(c.pod)}</span><b>asi ${km.toLocaleString('cs')} km</b><small class="muted">vzdušnou čarou</small></div>` : ''}`
@@ -4771,10 +4772,39 @@ async function renderContainer(id) {
       </div>
       ${ev.length ? `<div style="padding:0 16px 14px"><div class="small muted" style="margin-bottom:6px">Poslední události</div>${ev.map(e => `<div class="ct-ev"><span class="muted small nowrap">${e.at ? czDateTime(e.at) : ''}</span><span>${esc(String(e.e).replace(/^container\.transport\./, '').replace(/_/g, ' '))}${e.loc ? ' · ' + esc(e.loc) : ''}${e.vessel ? ' · ' + esc(e.vessel) : ''}</span></div>`).join('')}</div>` : ''}</div>`;
   }
+  // zadání sledování: podle čeho a u kterého rejdaře
+  async function trackForm(why = '') {
+    const c = cur(); const t = c.tracking || {}; const rq = t.req || {};
+    const own = v => (v && v.toUpperCase().replace(/[^A-Z0-9]/g, '') !== String(c.number || '').toUpperCase().replace(/[^A-Z0-9]/g, '') ? v : '');
+    const start = rq.type || (own(c.bl) ? 'bill_of_lading' : own(c.booking) ? 'booking_number' : 'container');
+    const numFor = type => rq.type === type && type !== 'container' ? rq.number : type === 'bill_of_lading' ? own(c.bl) : type === 'booking_number' ? (c.booking || '') : (c.number || '');
+    const pending = modal({ title: 'Zadání sledování',
+      body: `${why ? `<p class="small warn-t">${esc(why)}</p>` : ''}
+        <label>Sledovat podle</label><select data-ty>${[['container', 'čísla kontejneru'], ['bill_of_lading', 'hlavního B/L (nejspolehlivější)'], ['booking_number', 'čísla bookingu']].map(([k, l]) => `<option value="${k}" ${k === start ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <label data-nl>Číslo</label><input data-no value="${esc(numFor(start))}" style="text-transform:uppercase">
+        <label>Rejdař (SCAC)</label><input data-sc maxlength="4" value="${esc(c.scac || t.scac || '')}" list="ctScacList" style="text-transform:uppercase" placeholder="prázdné = zkusit poznat">
+        <datalist id="ctScacList">${[['MSCU', 'MSC'], ['MAEU', 'Maersk'], ['CMDU', 'CMA CGM'], ['HLCU', 'Hapag-Lloyd'], ['ONEY', 'ONE'], ['EGLV', 'Evergreen'], ['COSU', 'COSCO'], ['OOLU', 'OOCL'], ['YMLU', 'Yang Ming'], ['HDMU', 'HMM'], ['ZIMU', 'ZIM']].map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</datalist>
+        <p class="small muted">Předpona čísla kontejneru neříká, kdo ho veze (kontejnery se pronajímají). Rejdaře a hlavní B/L (MBL) najdeš na konosamentu nebo ti je pošle spedice. <b>House B/L od spedice (např. Kuehne+Nagel) Terminal49 nepřijímá.</b></p>`,
+      actions: [{ label: 'Zrušit', value: null }, { label: 'Spustit', cls: 'primary', value: bd => ({ type: $('[data-ty]', bd).value, number: $('[data-no]', bd).value.trim().toUpperCase(), scac: $('[data-sc]', bd).value.trim().toUpperCase() }) }] });
+    const dlg = $$('.backdrop').pop(); const ty = $('[data-ty]', dlg), no = $('[data-no]', dlg); // okno je v DOM hned
+    const sync = () => { no.readOnly = ty.value === 'container'; $('[data-nl]', dlg).textContent = ty.value === 'container' ? 'Číslo kontejneru (mění se v Úpravách)' : ty.value === 'booking_number' ? 'Číslo bookingu' : 'Číslo hlavního B/L'; };
+    ty.onchange = () => { no.value = numFor(ty.value); sync(); }; sync();
+    const v = await pending;
+    if (!v) return;
+    if (v.type !== 'container' && !v.number) return toast('Vyplň číslo.', true);
+    try {
+      const f = { scac: v.scac };
+      if (v.type === 'bill_of_lading') f.bl = v.number; else if (v.type === 'booking_number') f.booking = v.number;
+      await patch(f);
+      if (t.scac && !v.scac) await patch({ tracking: { ...cur().tracking, scac: '' } });
+    } catch (e) { return toast(e.message, true); }
+    const b = $('#tkRefresh') || $('#tkStart') || $('#tkEdit');
+    if (b) trackNow(b, { scac: v.scac || undefined, ref: { type: v.type, number: v.number } });
+  }
   async function trackNow(btn, extra = {}) {
     const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Načítám…';
     try {
-      const r = await ctCall({ action: 'ct_track', containerId: id, force: true, scac: extra.scac });
+      const r = await ctCall({ action: 'ct_track', containerId: id, scac: extra.scac, ref: extra.ref });
       if (r.needScac) {
         btn.disabled = false; btn.innerHTML = old;
         const v = await modal({ title: 'Který je to rejdař?', focus: '[data-sc]',
@@ -4786,6 +4816,7 @@ async function renderContainer(id) {
       if (!r.ok) toast(r.message || 'Sledování se nepovedlo', true);
       else toast(r.pending ? r.message : 'Sledování aktualizováno');
       await loadCt(); draw();
+      if (!r.ok && r.canRetry && !extra.ref) trackForm(r.message);
     } catch (e) {
       if (/TERMINAL49_API_KEY/.test(e.message)) await modal({ title: 'Sledování ještě není zapnuté', body: '<p>V Supabase chybí tajný klíč <b>TERMINAL49_API_KEY</b>. Přidej ho v Supabase → Edge Functions → Secrets (návod ti poslal Claude v chatu) a zkus to znovu.</p>', actions: [{ label: 'Rozumím', value: null, cls: 'primary' }] });
       else toast(e.message, true);
@@ -4883,7 +4914,8 @@ async function renderContainer(id) {
     const r2 = $('#cRecv2'); if (r2) r2.onclick = () => $('#cRecv').click();
     if (mode === 'view' && $('#ctMap')) ctDrawMap(cur());
     const tk1 = $('#tkStart'); if (tk1) tk1.onclick = () => trackNow(tk1);
-    const tk2 = $('#tkRefresh'); if (tk2) tk2.onclick = () => trackNow(tk2, { force: true });
+    const tk2 = $('#tkRefresh'); if (tk2) tk2.onclick = () => trackNow(tk2);
+    const tk3 = $('#tkEdit'); if (tk3) tk3.onclick = () => trackForm();
     if (mode === 'recv') return bindRecv(b);
     if (mode !== 'edit') return;
     $$('[data-st]', b).forEach(x => x.onclick = async () => { const st = x.dataset.st; try { await patch({ status: st, ...(st === 'delivered' && !cur().delivered_at ? { delivered_at: ymd(new Date()) } : {}) }); draw(); } catch (e) { toast(e.message, true); } });
