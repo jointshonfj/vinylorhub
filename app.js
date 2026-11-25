@@ -4554,12 +4554,32 @@ function trackLinks(c) {
   return out.map(([l, u]) => `<a class="btn sm" href="${u}" target="_blank" rel="noopener noreferrer">${l}</a>`).join(' ');
 }
 async function loadCt() {
-  const [list, items, inv] = await Promise.all([
+  const [list, items, inv, media] = await Promise.all([
     fetchAll(() => sb.from('ct_containers').select('*').order('eta', { ascending: true, nullsFirst: false }).order('created_at')),
     fetchAll(() => sb.from('ct_items').select('*').order('sort').order('created_at')),
     fetchAll(() => sb.from('ct_invoices').select('*').order('created_at')),
+    ctLoadMedia(),
   ]);
-  CT.list = list; CT.items = items; CT.inv = inv;
+  CT.list = list; CT.items = items; CT.inv = inv; CT.media = media;
+}
+// fotky a odkazy na e-shop (plní je server ze Shoptetu); bez nich appka funguje dál
+const CT_IMG = 'https://cdn.myshoptet.com/usr/www.vinylor.cz/';
+async function ctLoadMedia() {
+  try { const rows = await fetchAll(() => sb.from('hub_product_media').select('code,url,thumb,image,error').order('code')); return new Map(rows.map(r => [r.code, r])); } catch { return CT.media || new Map(); }
+}
+const ctMedia = i => (!i.custom && i.code && CT.media && CT.media.get(i.code)) || {};
+const ctShopUrl = m => (String(m.url || '').startsWith('https://www.vinylor.cz/') ? m.url : '');
+function ctProd(i, inner) {
+  const m = ctMedia(i); const url = ctShopUrl(m);
+  const ph = String(m.thumb || '').startsWith(CT_IMG)
+    ? `<button type="button" class="ct-ph" data-ph="${esc(i.code)}" aria-label="Zvětšit fotku: ${esc(i.name)}"><img src="${esc(m.thumb)}" alt="" width="56" height="56" loading="lazy"></button>`
+    : '<span class="ct-ph none" aria-hidden="true">📦</span>';
+  return `<div class="ct-prod">${ph}<div class="ct-prod-t">${inner}${url ? `<div class="small"><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Otevřít na e-shopu ↗</a></div>` : ''}</div></div>`;
+}
+function ctPhoto(item) {
+  const m = ctMedia(item); const url = ctShopUrl(m);
+  if (!String(m.image || '').startsWith(CT_IMG)) return;
+  modal({ title: item.name, body: `<img class="ct-ph-big" src="${esc(m.image)}" alt="${esc(item.name)}"><p class="small muted">Kód ${esc(item.code)}${url ? ` · <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Otevřít na e-shopu ↗</a>` : ''}</p>`, actions: [{ label: 'Zavřít', value: null }] });
 }
 function ctLocked(label) {
   shell('ct', `<div class="topbar"><h1>${label}</h1></div><div class="panel empty-big"><div class="ill">🔒</div><h3>Zatím jen pro vybrané uživatele</h3><p>Tuhle aplikaci teď vyvíjíme. Jakmile bude hotová, zpřístupníme ji.</p><button class="btn primary" onclick="location.hash='#/'">Zpět na nabídky</button></div>`);
@@ -4844,7 +4864,7 @@ async function renderContainer(id) {
     ${trackPanel()}
     ${ctHasMap(c) ? `<div class="panel ct-sec ct-mapbox"><div class="panel-h">🗺️ Mapa plavby<span class="sub">${t0(c)}</span><span class="grow"></span>${trackLinks(c)}</div><div id="ctMap"></div></div>` : ''}
     <div class="panel ct-sec"><div class="panel-h">Obsah kontejneru</div><div style="overflow-x:auto"><table class="list"><thead><tr><th>Kód</th><th>Produkt</th><th class="r">Objednáno</th><th class="r">Dorazilo</th><th>Příjem</th><th></th></tr></thead><tbody>
-      ${its.map(i => `<tr><td class="nowrap"><b>${esc(i.code) || '—'}</b></td><td>${esc(i.name)}${i.custom ? ' <span class="tag">mimo Shoptet</span>' : ''}${i.note ? `<div class="small muted">${esc(i.note)}</div>` : ''}${!i.custom && (i.ean || i.mpn) ? `<div class="small muted">${[i.ean && 'EAN ' + esc(i.ean), i.mpn && 'MPN ' + esc(i.mpn)].filter(Boolean).join(' · ')}</div>` : ''}${i.recv_note ? `<div class="small warn-t">↳ ${esc(i.recv_note)}</div>` : ''}</td>
+      ${its.map(i => `<tr><td class="nowrap"><b>${esc(i.code) || '—'}</b></td><td>${ctProd(i, `${esc(i.name)}${i.custom ? ' <span class="tag">mimo Shoptet</span>' : ''}${i.note ? `<div class="small muted">${esc(i.note)}</div>` : ''}${!i.custom && (i.ean || i.mpn) ? `<div class="small muted">${[i.ean && 'EAN ' + esc(i.ean), i.mpn && 'MPN ' + esc(i.mpn)].filter(Boolean).join(' · ')}</div>` : ''}${i.recv_note ? `<div class="small warn-t">↳ ${esc(i.recv_note)}</div>` : ''}`)}</td>
         <td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td><td class="r nowrap">${i.got == null ? '<span class="muted">—</span>' : `<b ${toNum(i.got) !== toNum(i.qty) ? 'class="warn-t"' : ''}>${fmtQ(i.got)} ${esc(i.unit)}</b>`}</td><td>${recvBadge(i.recv_state)}</td>
         <td class="small">${i.stocked ? '<span class="tag blue">naskladněno</span>' : i.custom ? '<span class="muted">nenaskladňuje se</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Zatím bez položek — přidej je v úpravách.</td></tr>'}</tbody></table></div></div>
     ${invoicesPanel(false)}`;
@@ -4872,7 +4892,7 @@ async function renderContainer(id) {
       <label style="margin-top:12px">Poznámka</label><input data-k="note" value="${esc(c.note)}"><div style="margin-top:10px">${trackLinks(c)}</div></div>
     <div class="panel ct-sec"><div class="panel-h">Obsah kontejneru</div><div style="overflow-x:auto"><table class="list"><thead><tr><th>Kód</th><th>Produkt</th><th class="r" style="width:120px">Množství</th><th style="width:80px">Jednotka</th><th></th></tr></thead><tbody>
       ${its.map(i => `<tr data-i="${i.id}"><td class="nowrap">${i.custom && !lockedItem(i) ? `<input data-f="code" value="${esc(i.code)}" placeholder="kód" style="width:110px">` : `<b>${esc(i.code) || '—'}</b>`}</td>
-        <td>${i.custom && !lockedItem(i) ? `<input data-f="name" value="${esc(i.name)}" placeholder="název"><input data-f="note" value="${esc(i.note)}" placeholder="EAN, MPN, poznámka…" style="margin-top:4px">` : esc(i.name)}${i.custom ? '<div style="margin-top:4px"><span class="tag">mimo Shoptet</span>' + (lockedItem(i) ? '' : ' <label style="display:inline"><input type="checkbox" data-f="custom" checked style="width:auto"> není v Shoptetu</label>') + '</div>' : ''}${i.stocked ? ' <span class="tag blue">naskladněno</span>' : ''}</td>
+        <td>${i.custom && !lockedItem(i) ? `<input data-f="name" value="${esc(i.name)}" placeholder="název"><input data-f="note" value="${esc(i.note)}" placeholder="EAN, MPN, poznámka…" style="margin-top:4px">` : ctProd(i, esc(i.name))}${i.custom ? '<div style="margin-top:4px"><span class="tag">mimo Shoptet</span>' + (lockedItem(i) ? '' : ' <label style="display:inline"><input type="checkbox" data-f="custom" checked style="width:auto"> není v Shoptetu</label>') + '</div>' : ''}${i.stocked ? ' <span class="tag blue">naskladněno</span>' : ''}</td>
         <td class="r"><input type="number" step="any" min="0" data-f="qty" value="${i.qty}" style="width:100px;text-align:right" ${lockedItem(i) ? 'disabled' : ''}></td><td><input data-f="unit" value="${esc(i.unit)}" style="width:70px" ${lockedItem(i) ? 'disabled' : ''}></td>
         <td>${lockedItem(i) ? '' : `<button class="btn sm" data-rm="${i.id}">✕</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Zatím bez položek — přidej je níže.</td></tr>'}</tbody></table></div></div>
     ${stocked() ? '' : `<div class="panel panel-b ct-sec"><label>＋ Přidat produkt z e-shopu (kód, název, EAN, MPN…)</label><div style="position:relative"><input id="cAddQ" placeholder="např. Carrara click 6mm" autocomplete="off"><div id="cAddRes" class="results" hidden></div></div><div style="margin-top:10px"><button class="btn" id="cAddCustom">＋ Produkt, který není v Shoptetu</button> <span class="small muted">Do skladu se nenaskladní, jen se eviduje a dá se vyhledat.</span></div></div>`}
@@ -4894,7 +4914,7 @@ async function renderContainer(id) {
       ${its.map(i => {
         const lk = lockedItem(i);
         return `<tr data-i="${i.id}" class="${lk ? 'ct-done' : ''}"><td>${pickable(i) ? `<input type="checkbox" data-sel ${sel.has(i.id) ? 'checked' : ''} style="width:auto">` : ''}</td>
-          <td><b>${esc(i.code) || '—'}</b> ${i.custom ? '<span class="tag">mimo Shoptet</span>' : ''}${i.stocked ? ' <span class="tag blue">naskladněno</span>' : ''}<div class="small muted">${esc(i.name)}</div></td>
+          <td>${ctProd(i, `<b>${esc(i.code) || '—'}</b> ${i.custom ? '<span class="tag">mimo Shoptet</span>' : ''}${i.stocked ? ' <span class="tag blue">naskladněno</span>' : ''}<div class="small muted">${esc(i.name)}</div>`)}</td>
           <td class="r nowrap">${fmtQ(i.qty)} ${esc(i.unit)}</td>
           <td>${lk ? recvBadge(i.recv_state) : `<select data-r="recv_state"><option value="">— zkontrolovat —</option>${Object.entries(CT_RECV).map(([k, v]) => `<option value="${k}" ${i.recv_state === k ? 'selected' : ''}>${v[0] === 'OK' ? 'Dorazilo OK' : v[0] === 'Méně' ? 'Dorazilo méně' : v[0] === 'Více' ? 'Dorazilo více' : v[0]}</option>`).join('')}</select>`}</td>
           <td class="r nowrap">${lk || i.custom ? (i.got == null ? '—' : fmtQ(i.got) + ' ' + esc(i.unit)) : `<input type="number" step="any" min="0" data-r="got" value="${i.got ?? ''}" placeholder="${fmtQ(i.qty)}" style="width:100px;text-align:right"> ${esc(i.unit)}`}</td>
@@ -4910,8 +4930,23 @@ async function renderContainer(id) {
     $('#cBody').innerHTML = mode === 'edit' ? editBody() : mode === 'recv' ? recvBody() : viewBody();
     bind();
   }
+  const asked = new Set();
+  async function fetchMedia() {
+    const missing = itemsOf().filter(i => !i.custom && i.code && !CT.media.has(i.code) && !asked.has(i.code));
+    if (!missing.length) return;
+    missing.forEach(i => asked.add(i.code));
+    try {
+      const { error } = await sb.functions.invoke('hub-product-media', { body: {} });
+      if (error) return;
+      CT.media = await ctLoadMedia();
+      // nepřekreslovat, když uživatel zrovna píše nebo odešel jinam
+      if ($('#cBody') && location.hash.includes(id) && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && missing.some(i => CT.media.get(i.code)?.thumb)) draw();
+    } catch { /* fotky doplní plánovač */ }
+  }
   function bind() {
     const b = $('#cBody');
+    $$('[data-ph]', b).forEach(x => x.onclick = () => ctPhoto(itemsOf().find(i => i.code === x.dataset.ph)));
+    fetchMedia();
     $$('[data-pdf]', b).forEach(a => a.onclick = e => { e.preventDefault(); const v = CT.inv.find(x => x.id === a.dataset.pdf); if (v) ctOpenInvoice(v); });
     const r2 = $('#cRecv2'); if (r2) r2.onclick = () => $('#cRecv').click();
     if (mode === 'view' && $('#ctMap')) ctDrawMap(cur());

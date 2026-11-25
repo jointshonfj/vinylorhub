@@ -924,6 +924,13 @@ button.ct-st:hover span { text-decoration: underline; }
 .ct-big { font-size: 28px; font-weight: 700; line-height: 1.1; }
 .ct-big small { font-size: 13px; font-weight: 500; color: var(--muted); }
 .ct-sec { margin-bottom: 14px; }
+.ct-prod { display: flex; align-items: center; gap: 12px; min-width: 0; text-align: left; }
+.ct-prod-t { min-width: 0; flex: 1; }
+.ct-ph { flex: none; width: 56px; height: 56px; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; display: grid; place-items: center; }
+button.ct-ph { cursor: zoom-in; }
+.ct-ph img { width: 100%; height: 100%; object-fit: contain; }
+.ct-ph.none { background: var(--surface-2); font-size: 20px; opacity: .6; }
+.ct-ph-big { display: block; width: 100%; max-height: 62vh; object-fit: contain; border-radius: 12px; background: #fff; }
 .ct-flow { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
 .ct-flow span.on { color: var(--ink); font-weight: 600; }
 .ct-flow u { width: 28px; height: 2px; background: var(--line-2); }
